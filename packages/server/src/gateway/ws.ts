@@ -204,6 +204,15 @@ export class Gateway {
           acp: rt.acpCache,
           pendingPermissions: rt.listPendingPermissions(),
         });
+        // acp 侧未加载时快照用的是磁盘缓存, configOptions 可能陈旧 (认证/清单变化后)
+        // 后台触发 load — 完成后广播 session.loaded 刷新各端模型/模式清单; 失败不影响订阅
+        if (!rt.acpLoaded) {
+          this.mgr.loadDevinSession(msg.sessionId, rt.meta.cwd, rt.meta.additionalDirectories)
+            .then((loaded) => {
+              this.broadcast({ type: 'session.loaded', session: loaded.meta, acp: loaded.acpCache ?? undefined });
+            })
+            .catch(() => { /* load 失败不影响订阅; prompt 前还会重试 */ });
+        }
         break;
       }
 

@@ -571,6 +571,20 @@ class DevinClient {
       case 'session.loaded': {
         // 契约 v2: session.load 成功 — 结构同 session.created, 按 devinSessionId 兑现等待者
         sessions.upsert(msg.session);
+        // load 后 acp 数据已刷新 (模型/模式清单可能变化) — 以 reset=false 纯 merge 注入聊天区,
+        // 不动消息列表; pendingPermissions 传现值避免被空数组误清
+        if (msg.acp) {
+          chat.applySnapshotMsg(
+            msg.session.sessionId,
+            {
+              session: msg.session,
+              events: [],
+              acp: msg.acp,
+              pendingPermissions: chat.bySession[msg.session.sessionId]?.pendingPermissions ?? [],
+            },
+            false,
+          );
+        }
         const idx = this.pendingLoads.findIndex((p) => p.devinSessionId === msg.session.sessionId);
         if (idx >= 0) {
           const [pending] = this.pendingLoads.splice(idx, 1);
