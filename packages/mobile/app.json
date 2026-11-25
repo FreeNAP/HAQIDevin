@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "HAQIDevin",
+    "slug": "haqidevin",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "devinremote",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "backgroundColor": "#fafaf7",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.haqiai.devin"
+    },
+    "android": {
+      "package": "com.haqiai.devin",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#fafaf7"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-notifications"
+    ],
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#fafaf7"
+    }
+  }
+}

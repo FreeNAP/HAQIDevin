@@ -1,0 +1,309 @@
+<!-- Devin Remote — 共享内容标记（5 套皮肤共用） -->
+<header class="board-head" data-enter>
+  <a class="back-link" href="index.html">‹ 全部风格</a>
+  <div class="board-title-row">
+    <span class="style-index">STYLE-INDEX</span>
+    <h1 class="style-name">STYLE-NAME</h1>
+  </div>
+  <p class="style-philosophy">STYLE-PHILOSOPHY</p>
+</header>
+
+<main class="board">
+  <!-- ============ 手机端 ============ -->
+  <section class="group group-phones" data-enter>
+    <div class="group-head">
+      <h2>手机端 <span class="group-sub">devin-remote-mobile · 4 个核心界面</span></h2>
+    </div>
+    <div class="phone-row">
+
+      <!-- 界面 1：会话列表 -->
+      <div class="phone" data-enter>
+        <div class="phone-screen">
+          <div class="statusbar"><span class="sb-time">9:41</span><span class="sb-icons"><i class="sb-signal"></i><i class="sb-wifi"></i><i class="sb-batt"></i></span></div>
+          <div class="scr scr-sessions">
+            <div class="app-bar">
+              <div class="app-bar-title">Devin Remote</div>
+              <div class="host-chip"><span class="dot dot-ok"></span>devin.example.com</div>
+            </div>
+            <div class="chip-row">
+              <span class="fchip on">全部</span><span class="fchip">运行中</span><span class="fchip hot">待审批<b>1</b></span><span class="fchip">已完成</span>
+            </div>
+            <div class="sess-list">
+              <div class="sess-row warn">
+                <div class="sess-main">
+                  <div class="sess-title">邮箱验证码登录改造</div>
+                  <div class="sess-meta">HAQIDevin · 2 分钟前</div>
+                  <div class="sess-snippet">等待批准：npm install nodemailer</div>
+                </div>
+                <div class="sess-badge b-warn">待审批</div>
+              </div>
+              <div class="sess-row live">
+                <div class="sess-main">
+                  <div class="sess-title">payment 模块错误处理重构</div>
+                  <div class="sess-meta">shop-api · 18 分钟前</div>
+                  <div class="sess-snippet">正在运行 npm test…</div>
+                </div>
+                <div class="sess-badge b-live"><span class="pulse"></span>运行中</div>
+              </div>
+              <div class="sess-row">
+                <div class="sess-main">
+                  <div class="sess-title">README 国际化与文档补全</div>
+                  <div class="sess-meta">HAQIDevin · 1 小时前</div>
+                  <div class="sess-snippet">已提交 PR #42，等待 review</div>
+                </div>
+                <div class="sess-badge b-done">已完成</div>
+              </div>
+              <div class="sess-row">
+                <div class="sess-main">
+                  <div class="sess-title">修复 CI lint 流水线失败</div>
+                  <div class="sess-meta">infra · 昨天</div>
+                  <div class="sess-snippet">3 个文件已修改，检查全部通过</div>
+                </div>
+                <div class="sess-badge b-done">已完成</div>
+              </div>
+              <div class="sess-row dim">
+                <div class="sess-main">
+                  <div class="sess-title">数据库连接池配置迁移</div>
+                  <div class="sess-meta">shop-api · 昨天</div>
+                  <div class="sess-snippet">已暂停 — 等待恢复</div>
+                </div>
+                <div class="sess-badge b-dim">已暂停</div>
+              </div>
+            </div>
+            <div class="tabbar">
+              <span class="tab on"><i class="ti ti-chat"></i>会话</span>
+              <span class="tab"><i class="ti ti-dev"></i>设备</span>
+              <span class="tab"><i class="ti ti-cog"></i>我的</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 界面 2：流式对话 -->
+      <div class="phone" data-enter>
+        <div class="phone-screen">
+          <div class="statusbar"><span class="sb-time">9:41</span><span class="sb-icons"><i class="sb-signal"></i><i class="sb-wifi"></i><i class="sb-batt"></i></span></div>
+          <div class="scr scr-chat">
+            <div class="chat-bar">
+              <span class="chat-back">‹</span>
+              <div class="chat-bar-main">
+                <div class="chat-title">邮箱验证码登录改造</div>
+                <div class="chat-pills"><span class="pill">Normal</span><span class="pill">SWE-2.1 Max</span></div>
+              </div>
+              <span class="chat-more">⋯</span>
+            </div>
+            <div class="msg-flow">
+              <div class="msg user"><div class="msg-body">帮我把登录页改成支持邮箱验证码登录，控制台那个 hydration 报错也顺便修一下</div></div>
+              <div class="msg agent"><div class="msg-body">好的。我先看现在登录页的实现和 AuthProvider 的挂载方式，再动手改。</div></div>
+              <div class="tool-card done">
+                <div class="tc-head"><span class="tc-name">read</span><span class="tc-status ok">✓ 完成</span></div>
+                <div class="tc-detail mono">src/pages/login.tsx · 214 行</div>
+              </div>
+              <div class="tool-card done">
+                <div class="tc-head"><span class="tc-name">exec</span><span class="tc-status ok">✓ exit 0 · 12.4s</span></div>
+                <div class="tc-detail mono">npm run test — 26 passed, 0 failed</div>
+              </div>
+              <div class="tool-card done">
+                <div class="tc-head"><span class="tc-name">edit</span><span class="tc-status ok">✓ 完成</span></div>
+                <div class="tc-detail mono">src/pages/login.tsx <b class="add">+42</b> <b class="del">−18</b></div>
+              </div>
+              <div class="msg agent streaming"><div class="msg-body"><span class="type-target">正在检查 AuthProvider 的挂载时机——hydration 报错很可能是服务端渲染时 useEffect 未执行导致的，我先定位到具体的组件…</span><span class="cursor">▍</span></div></div>
+            </div>
+            <div class="input-bar">
+              <span class="ib-plus">＋</span>
+              <span class="ib-hint">输入消息，或 / 命令</span>
+              <span class="ib-send">↑</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 界面 3：权限审批 -->
+      <div class="phone" data-enter>
+        <div class="phone-screen">
+          <div class="statusbar"><span class="sb-time">9:42</span><span class="sb-icons"><i class="sb-signal"></i><i class="sb-wifi"></i><i class="sb-batt"></i></span></div>
+          <div class="scr scr-perm">
+            <div class="chat-bar">
+              <span class="chat-back">‹</span>
+              <div class="chat-bar-main">
+                <div class="chat-title">邮箱验证码登录改造</div>
+                <div class="chat-pills"><span class="pill">Normal</span><span class="pill">SWE-2.1 Max</span></div>
+              </div>
+              <span class="chat-more">⋯</span>
+            </div>
+            <div class="perm-wrap">
+              <div class="perm-card" data-pulse>
+                <div class="perm-shield">🛡</div>
+                <div class="perm-title">需要你的批准</div>
+                <div class="perm-tool mono">exec</div>
+                <div class="perm-cmd mono">npm install nodemailer</div>
+                <div class="perm-desc">将安装新依赖，并修改 package.json 与 package-lock.json</div>
+                <div class="perm-meta mono">工作目录 · HAQIDevin</div>
+                <div class="perm-actions">
+                  <button class="pa primary">允许一次</button>
+                  <button class="pa">总是允许</button>
+                  <button class="pa danger">拒绝</button>
+                </div>
+              </div>
+              <div class="plan-card">
+                <div class="plan-head">计划 · 3/5</div>
+                <div class="plan-item done">✓ 接入验证码接口</div>
+                <div class="plan-item done">✓ 登录页 UI 改造</div>
+                <div class="plan-item doing">● 安装 nodemailer 依赖</div>
+                <div class="plan-item">○ 补充集成测试</div>
+                <div class="plan-item">○ 修复 hydration 报错</div>
+              </div>
+              <div class="perm-queue mono">下一条待审批 · exec git commit -m "feat: email code login"</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 界面 4：设备与配对 -->
+      <div class="phone" data-enter>
+        <div class="phone-screen">
+          <div class="statusbar"><span class="sb-time">9:43</span><span class="sb-icons"><i class="sb-signal"></i><i class="sb-wifi"></i><i class="sb-batt"></i></span></div>
+          <div class="scr scr-pair">
+            <div class="app-bar">
+              <div class="app-bar-title">设备</div>
+              <div class="host-chip"><span class="dot dot-ok"></span>TLS · 68ms</div>
+            </div>
+            <div class="pair-host">
+              <div class="ph-name mono">devin.example.com</div>
+              <div class="ph-sub">Cloudflare Tunnel · 已连接 6 小时</div>
+            </div>
+            <div class="pair-card">
+              <div class="pair-title">添加新设备</div>
+              <div class="qr"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <div class="pair-code mono">K7QM-2XFD</div>
+              <div class="pair-expire">有效期剩余 <b class="countdown">04:32</b></div>
+              <div class="pair-note">配对码在桌面端「Devin Remote」面板生成，一次性使用</div>
+            </div>
+            <div class="dev-list">
+              <div class="dev-row self">
+                <div class="dev-main"><div class="dev-name">iPhone 15 Pro</div><div class="dev-meta">本机 · 活跃中</div></div>
+                <span class="dev-tag">当前设备</span>
+              </div>
+              <div class="dev-row">
+                <div class="dev-main"><div class="dev-name">Pixel 8</div><div class="dev-meta">2 小时前活跃</div></div>
+                <button class="dev-revoke">撤销</button>
+              </div>
+              <div class="dev-row">
+                <div class="dev-main"><div class="dev-name">MacBook 浏览器</div><div class="dev-meta">12 天前活跃</div></div>
+                <button class="dev-revoke">撤销</button>
+              </div>
+            </div>
+            <div class="lan-row mono">局域网直连 · 192.168.1.8:8787 · 已启用</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ VSIX 插件 ============ -->
+  <section class="group group-desktop" data-enter>
+    <div class="group-head">
+      <h2>VSIX 插件 <span class="group-sub">devin-remote-vscode · 控制面板 + 侧栏</span></h2>
+    </div>
+    <div class="desktop-row">
+
+      <!-- 控制面板 webview -->
+      <div class="desktop" data-enter>
+        <div class="win-chrome"><span class="wc-dot"></span><span class="wc-dot"></span><span class="wc-dot"></span><span class="wc-title">Devin Desktop — Devin Remote 控制面板</span></div>
+        <div class="panel">
+          <nav class="panel-nav">
+            <div class="pn-logo">◈ Devin Remote</div>
+            <span class="pn-item on">概览</span>
+            <span class="pn-item">设备</span>
+            <span class="pn-item">日志</span>
+            <span class="pn-item">设置</span>
+            <div class="pn-status"><span class="dot dot-ok"></span>服务正常</div>
+          </nav>
+          <div class="panel-main">
+            <div class="stat-cards">
+              <div class="stat-card">
+                <div class="sc-label">Cloudflare 隧道</div>
+                <div class="sc-value ok">已连接</div>
+                <div class="sc-sub mono">4/4 连接 · 在线 6h 12m</div>
+                <div class="sc-sub mono">devin.example.com</div>
+              </div>
+              <div class="stat-card">
+                <div class="sc-label">本地服务</div>
+                <div class="sc-value ok">运行中</div>
+                <div class="sc-sub mono">127.0.0.1:8787</div>
+                <div class="sc-sub mono">2 个活跃会话</div>
+              </div>
+              <div class="stat-card">
+                <div class="sc-label">已配对设备</div>
+                <div class="sc-value">3 台</div>
+                <div class="sc-sub mono">1 台当前在线</div>
+                <div class="sc-sub mono">iPhone 15 Pro 等</div>
+              </div>
+            </div>
+            <div class="panel-grid">
+              <div class="pair-widget">
+                <div class="pw-title">设备配对</div>
+                <div class="pw-body">
+                  <div class="qr big"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                  <div class="pw-right">
+                    <div class="pair-code mono big">K7QM-2XFD</div>
+                    <div class="pair-expire">有效期剩余 <b class="countdown">04:32</b></div>
+                    <button class="pa primary">生成新配对码</button>
+                  </div>
+                </div>
+              </div>
+              <div class="log-widget">
+                <div class="pw-title">健康检查日志</div>
+                <div class="log-lines mono">
+                  <div class="ll ok">14:02:11 健康检查通过 · 212ms</div>
+                  <div class="ll ok">14:02:01 健康检查通过 · 198ms</div>
+                  <div class="ll ok">14:01:51 健康检查通过 · 204ms</div>
+                  <div class="ll">13:58:44 tunnel 连接已注册 (4/4)</div>
+                  <div class="ll">13:58:31 cloudflared 已启动 · v2024.11.0</div>
+                  <div class="ll">13:58:30 本地服务已就绪 · 127.0.0.1:8787</div>
+                </div>
+                <div class="panel-actions">
+                  <button class="pa">重新连接</button>
+                  <button class="pa">复制诊断信息</button>
+                  <button class="pa danger">停止服务</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 侧栏聊天 -->
+      <div class="sidebar" data-enter>
+        <div class="win-chrome sm"><span class="wc-title">DEVIN REMOTE · 侧栏</span></div>
+        <div class="side-body">
+          <div class="side-sess on">
+            <div class="ss-title">邮箱验证码登录改造</div>
+            <div class="ss-meta"><span class="dot dot-warn"></span>待审批 · 2 分钟前</div>
+          </div>
+          <div class="side-sess">
+            <div class="ss-title">payment 错误处理重构</div>
+            <div class="ss-meta"><span class="dot dot-ok"></span>运行中 · 18 分钟前</div>
+          </div>
+          <div class="side-chat">
+            <div class="msg user"><div class="msg-body">测试也都一并改了</div></div>
+            <div class="msg agent"><div class="msg-body">收到，我会在集成测试里补上验证码过期和错误重试的分支。</div></div>
+            <div class="tool-card done">
+              <div class="tc-head"><span class="tc-name">write</span><span class="tc-status ok">✓ 完成</span></div>
+              <div class="tc-detail mono">tests/login-code.spec.ts <b class="add">+87</b></div>
+            </div>
+          </div>
+          <div class="input-bar">
+            <span class="ib-hint">继续对话…</span>
+            <span class="ib-send">↑</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="board-foot">
+  <span>Devin Remote · UI 风格样稿 — 内容均为示意数据</span>
+  <a href="index.html">返回风格选择 ›</a>
+</footer>

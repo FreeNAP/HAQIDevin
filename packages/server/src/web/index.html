@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#fdfdfb">
+<title>Devin Remote</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <span class="conn-dot" id="connDot"></span>
+    <span class="logo">devin<em>/</em>remote</span>
+    <span class="spacer"></span>
+    <span class="who mono" id="whoLabel"></span>
+  </header>
+
+  <main>
+    <div class="error-banner" id="errorBanner"></div>
+
+    <!-- 配对视图 -->
+    <section class="view active" id="view-pair">
+      <div class="pair-hero">
+        <h1>把你的 devin<br>装进口袋<em>.</em></h1>
+        <p>输入电脑端控制面板显示的 8 位配对码, 这台设备即可安全接入你的 devin 会话。</p>
+      </div>
+      <label class="field">
+        <span class="label">配对码</span>
+        <input type="text" id="pairCode" class="code-input" maxlength="9" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters">
+      </label>
+      <label class="field">
+        <span class="label">设备名称</span>
+        <input type="text" id="pairName" placeholder="例如: 我的手机浏览器">
+      </label>
+      <button class="btn primary" id="btnPair" style="width:100%">配对接入</button>
+      <ol class="pair-steps">
+        <li>配对码在电脑桌面面板生成, 5 分钟内有效, 仅用一次</li>
+        <li>成功后本机保存设备证书, 之后自动免密接入</li>
+        <li>可随时在电脑端撤销这台设备的访问权</li>
+      </ol>
+    </section>
+
+    <!-- 会话列表视图 -->
+    <section class="view" id="view-list">
+      <div class="section-title">工作目录</div>
+      <div id="workdirList"></div>
+      <div style="margin: 10px 0 4px;">
+        <button class="btn small" id="btnNewSession">+ 新建会话</button>
+        <button class="btn small" id="btnRefresh">刷新</button>
+      </div>
+      <div class="new-session-form" id="newSessionForm">
+        <div class="card">
+          <label class="field">
+            <span class="label">选择工作目录</span>
+            <select id="newSessionCwd"></select>
+          </label>
+          <button class="btn primary" id="btnCreateSession" style="width:100%">创建会话</button>
+        </div>
+      </div>
+      <div class="section-title">会话</div>
+      <div id="sessionList"></div>
+    </section>
+
+    <!-- 会话详情视图 -->
+    <section class="view" id="view-chat">
+      <div class="chat-head">
+        <span class="back" id="btnBack">←</span>
+        <h2 id="chatTitle">会话</h2>
+        <select class="mode-select" id="modeSelect" title="权限模式"></select>
+      </div>
+      <div id="permArea"></div>
+      <div id="chatFlow"></div>
+      <div id="runningHint" class="tiny" style="display:none; padding: 6px 0;">● agent 正在工作…</div>
+    </section>
+  </main>
+
+  <footer class="composer" id="composer" style="display:none">
+    <div class="composer-row">
+      <textarea id="inputBox" rows="1" placeholder="给 devin 下达指令… (Enter 发送, Shift+Enter 换行)"></textarea>
+      <button class="btn primary" id="btnSend">发送</button>
+    </div>
+    <div class="composer-meta">
+      <span id="composerStatus"></span>
+      <button class="btn small danger" id="btnCancel" style="display:none">■ 停止</button>
+    </div>
+  </footer>
+</div>
+<div id="toast"></div>
+<script src="app.js?v=4"></script>
+</body>
+</html>

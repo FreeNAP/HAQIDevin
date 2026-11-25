@@ -1,0 +1,87 @@
+{
+  "name": "devin-remote",
+  "displayName": "Devin Remote",
+  "description": "手机远程控制你的 devin 会话 — 本地服务托管 + Cloudflare 命名隧道 + 配对安全接入",
+  "version": "0.1.0",
+  "publisher": "devin-remote",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other", "Machine Learning"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "devin-remote.openPanel", "title": "Devin Remote: 打开控制面板", "category": "Devin Remote" },
+      { "command": "devin-remote.newPairingCode", "title": "Devin Remote: 生成配对码", "category": "Devin Remote" },
+      { "command": "devin-remote.restartServer", "title": "Devin Remote: 重启本地服务", "category": "Devin Remote" },
+      { "command": "devin-remote.reconnectTunnel", "title": "Devin Remote: 重连隧道", "category": "Devin Remote" },
+      { "command": "devin-remote.toggleServer", "title": "Devin Remote: 启动/停止服务", "category": "Devin Remote" }
+    ],
+    "configuration": {
+      "title": "Devin Remote",
+      "properties": {
+        "devin-remote.port": {
+          "type": "number",
+          "default": 8787,
+          "description": "本地服务监听端口"
+        },
+        "devin-remote.publicHostname": {
+          "type": "string",
+          "default": "",
+          "description": "你的公网域名 (Cloudflare 隧道 hostname, 例如 devin.example.com), 留空则仅局域网可用"
+        },
+        "devin-remote.tunnelToken": {
+          "type": "string",
+          "default": "",
+          "description": "Cloudflare 命名隧道 Token (eyJ... 开头, 在 Zero Trust 控制台创建隧道后获取)"
+        },
+        "devin-remote.lanEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "允许局域网直连 (同 WiFi 手机直接连电脑, 不走 Cloudflare)"
+        },
+        "devin-remote.workdirs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "允许手机端操作的工作目录清单 (绝对路径)"
+        },
+        "devin-remote.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Devin Desktop 启动时自动拉起远程服务"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "devin-remote",
+          "title": "Devin Remote",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "devin-remote": [
+        { "id": "devin-remote.sidebar", "name": "远程控制", "type": "webview" }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "node build.mjs",
+    "watch": "node build.mjs --watch"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^24.0.0",
+    "@types/qrcode": "^1.5.5",
+    "typescript": "^5.5.0",
+    "esbuild": "^0.24.0"
+  }
+}

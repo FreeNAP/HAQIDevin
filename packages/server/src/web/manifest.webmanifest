@@ -1,0 +1,12 @@
+{
+  "name": "Devin Remote",
+  "short_name": "DevinRemote",
+  "description": "远程控制你的 devin 会话",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fdfdfb",
+  "theme_color": "#fdfdfb",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

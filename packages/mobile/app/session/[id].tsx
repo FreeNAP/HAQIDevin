@@ -1,0 +1,318 @@
+/**
+ * 对话页 (核心) — 对照 mockup 界面 2/3
+ *  - 顶栏: ‹ 返回 + 标题 + 模式/模型 pill (点击弹选择器) + context 用量
+ *  - 消息流: 用户黑底靠右 / agent 白底黑框靠左 markdown / thought 折叠 / 工具卡 / plan 卡
+ *  - 流式中 agent 气泡朱红边框 + 闪烁光标
+ *  - 权限请求: 审批卡悬浮于输入栏上方, 竖排选项, 他端处理显示 "已由 XX 处理"
+ *  - 进入订阅 session.subscribe (sinceSeq 补拉), 离开 unsubscribe
+ */
+import React from 'react';
+import { View, FlatList, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useLocalSearchParams, router } from 'expo-router';
+import { colors } from '../../src/theme/colors';
+import { T, M } from '../../src/components/ui';
+import { useChatStore } from '../../src/store/chat';
+import { useSessionsStore } from '../../src/store/sessions';
+import { useConnectionStore } from '../../src/store/connection';
+import { client } from '../../src/ws/client';
+import { Markdown } from '../../src/components/Markdown';
+import {
+  UserBubble,
+  AgentBubble,
+  ThoughtCard,
+  ToolCallCard,
+  PlanCard,
+  NoticeRow,
+} from '../../src/components/chat-items';
+import { PermissionCard } from '../../src/components/PermissionCard';
+import { Composer } from '../../src/components/Composer';
+import { ConfigPickerModal } from '../../src/components/ConfigPickerModal';
+import { initChatState, ChatItem } from '../../src/reducers/chatReducer';
+import type { ConfigOption } from '../../src/protocol/acp';
+
+function renderItem(item: ChatItem, streamingAgentId: string | null) {
+  switch (item.kind) {
+    case 'user':
+      return <UserBubble item={item} />;
+    case 'agent':
+      return <AgentBubble item={item} streaming={item.id === streamingAgentId} />;
+    case 'thought':
+      return <ThoughtCard item={item} />;
+    case 'tool':
+      return <ToolCallCard item={item} />;
+    case 'plan':
+      return <PlanCard item={item} />;
+    case 'notice':
+      return <NoticeRow item={item} />;
+    default:
+      return null;
+  }
+}
+
+/** 从 configOptions 提取 category 匹配的 select 配置 */
+function findConfig(configOptions: ConfigOption[], category: string): ConfigOption | null {
+  const byCategory = configOptions.find((o) => o.category === category && o.type === 'select');
+  if (byCategory) return byCategory;
+  // 兜底: id 直接匹配 (devin 的 configOptions id 常为 'mode'/'model')
+  return configOptions.find((o) => o.id === category) ?? null;
+}
+
+function currentValueName(option: ConfigOption | null): string | null {
+  if (!option) return null;
+  const cur = option.currentValue;
+  if (!cur) return null;
+  return option.options?.find((o) => o.value === cur)?.name ?? cur;
+}
+
+function formatUsage(used?: number, size?: number): string | null {
+  if (typeof used !== 'number' || typeof size !== 'number' || size <= 0) return null;
+  const fmt = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
+  return `${fmt(used)}/${fmt(size)}`;
+}
+
+export default function ChatPage() {
+  const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ id: string }>();
+  const sessionId = typeof params.id === 'string' ? decodeURIComponent(params.id) : '';
+
+  const chat = useChatStore((s) => (sessionId ? s.bySession[sessionId] : undefined));
+  const meta = useSessionsStore((s) => (sessionId ? s.sessions[sessionId] : undefined));
+  const phase = useConnectionStore((s) => s.phase);
+
+  const [pickerTarget, setPickerTarget] = React.useState<'mode' | 'model' | null>(null);
+  const [resolvedFlash, setResolvedFlash] = React.useState<{ requestId: string; byDevice: string; key: number } | null>(null);
+  const prevPendingIds = React.useRef<string[]>([]);
+
+  // 订阅生命周期
+  React.useEffect(() => {
+    if (!sessionId) return;
+    useChatStore.getState().ensure(sessionId);
+    client.subscribe(sessionId);
+    return () => {
+      client.unsubscribe(sessionId);
+    };
+  }, [sessionId]);
+
+  const state = chat ?? initChatState(sessionId);
+
+  // 权限消失检测 → 若为他端/本机处理完成, 闪现 "已由 XX 处理"
+  React.useEffect(() => {
+    const cur = state.pendingPermissions.map((p) => p.requestId);
+    const disappeared = prevPendingIds.current.filter((id) => !cur.includes(id));
+    if (disappeared.length > 0) {
+      const id = disappeared[0]!;
+      const info = state.resolvedBy[id];
+      if (info) {
+        setResolvedFlash({ requestId: id, byDevice: info.byDevice, key: Date.now() });
+        const timer = setTimeout(() => setResolvedFlash(null), 6000);
+        prevPendingIds.current = cur;
+        return () => clearTimeout(timer);
+      }
+    }
+    prevPendingIds.current = cur;
+    return undefined;
+  }, [state.pendingPermissions, state.resolvedBy]);
+
+  const running = state.status === 'running' || state.status === 'waiting_permission';
+
+  // 流式光标: 仅当会话在跑且尾部是 agent 气泡
+  const lastItem = state.items.length > 0 ? state.items[state.items.length - 1] : undefined;
+  const streamingAgentId = running && lastItem?.kind === 'agent' ? lastItem.id : null;
+
+  const modeOption = findConfig(state.configOptions, 'mode');
+  const modelOption = findConfig(state.configOptions, 'model');
+  const modeName =
+    currentValueName(modeOption) ??
+    state.modes?.availableModes.find((m) => m.id === state.currentModeId)?.name ??
+    meta?.modeId ??
+    null;
+  const modelName = currentValueName(modelOption) ?? meta?.modelId ?? null;
+
+  const title = state.title ?? meta?.title ?? '未命名会话';
+  const usageText = formatUsage(state.usage?.used, state.usage?.size);
+
+  const reversed = React.useMemo(() => [...state.items].reverse(), [state.items]);
+  const firstPending = state.pendingPermissions[0] ?? null;
+
+  // 模式选择器数据源: 优先 configOptions (set_config_option), 无则用 ACP modes 合成 (set_mode)
+  const synthModeOption: ConfigOption | null = React.useMemo(() => {
+    if (modeOption || !state.modes) return null;
+    return {
+      id: '__mode__',
+      name: 'Mode',
+      type: 'select',
+      currentValue: state.currentModeId ?? state.modes.currentModeId,
+      options: state.modes.availableModes.map((m) => ({ value: m.id, name: m.name, description: m.description })),
+    } as ConfigOption;
+  }, [modeOption, state.modes, state.currentModeId]);
+
+  const pickerOption =
+    pickerTarget === 'mode'
+      ? modeOption ?? synthModeOption
+      : pickerTarget === 'model'
+        ? modelOption
+        : null;
+
+  return (
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: colors.paper }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={0}
+    >
+      <View style={[styles.page, { paddingTop: insets.top }]}>
+        {/* 顶栏 */}
+        <View style={styles.chatBar}>
+          <Pressable onPress={() => router.back()} hitSlop={12} style={styles.backBtn}>
+            <T size={21} weight="regular" color={colors.ink}>‹</T>
+          </Pressable>
+          <View style={styles.chatBarMain}>
+            <T size={13} weight="bold" ls={-0.1} numberOfLines={1}>
+              {title}
+            </T>
+            <View style={styles.pillsRow}>
+              {modeName && (
+                <Pressable onPress={() => setPickerTarget('mode')} style={styles.pill}>
+                  <M size={8.5} color={colors.ink} uppercase ls={0.4}>{modeName}</M>
+                </Pressable>
+              )}
+              {modelName && (
+                <Pressable onPress={() => setPickerTarget('model')} style={styles.pill}>
+                  <M size={8.5} color={colors.ink} uppercase ls={0.4}>{modelName}</M>
+                </Pressable>
+              )}
+              {!modeName && !modelName && (
+                <M size={8.5} color={colors.ink3}>…</M>
+              )}
+            </View>
+          </View>
+          {usageText && (
+            <M size={9} color={colors.ink3} style={{ marginLeft: 6 }}>
+              {usageText}
+            </M>
+          )}
+          <View style={[styles.statusDot, { backgroundColor: running ? colors.acc : colors.ink3 }]} />
+        </View>
+
+        {/* 断线提示 */}
+        {phase !== 'authed' && (
+          <Pressable style={styles.offlineBar} onPress={() => router.push('/connect')}>
+            <T size={10.5} weight="semibold" color={colors.acc}>
+              {phase === 'connecting' ? '连接中断 — 正在重连, 消息将自动补拉' : '未连接 — 点击去连接'}
+            </T>
+          </Pressable>
+        )}
+
+        {/* 消息流 */}
+        <FlatList
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.flowContent}
+          data={reversed}
+          inverted
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => <View>{renderItem(item, streamingAgentId)}</View>}
+          ListEmptyComponent={
+            <View style={styles.emptyWrap}>
+              {/* inverted 列表里这个组件是上下翻转的, 用 transform 翻回来 */}
+              <View style={{ transform: [{ scaleY: -1 }] }}>
+                <T size={11.5} color={colors.ink3} style={{ textAlign: 'center' }}>
+                  {phase === 'authed' ? '加载会话历史…' : '等待连接…'}
+                </T>
+              </View>
+            </View>
+          }
+          keyboardShouldPersistTaps="handled"
+        />
+
+        {/* 他端处理通告 */}
+        {resolvedFlash && !firstPending && (
+          <View style={styles.resolvedBar}>
+            <T size={10.5} weight="semibold" color={colors.ink2}>
+              权限请求已由 {resolvedFlash.byDevice} 处理
+            </T>
+          </View>
+        )}
+
+        {/* 权限审批卡 */}
+        {firstPending && (
+          <PermissionCard
+            perm={firstPending}
+            queueSize={state.pendingPermissions.length - 1}
+            onSelect={(optionId) => client.respondPermission(sessionId, firstPending.requestId, optionId)}
+          />
+        )}
+
+        {/* 输入栏 */}
+        <Composer
+          commands={state.availableCommands}
+          running={running}
+          disabled={phase !== 'authed'}
+          onSend={(text) => client.sendPrompt(sessionId, text)}
+          onCancel={() => client.cancel(sessionId)}
+        />
+        <View style={{ height: Math.max(insets.bottom - 6, 0), backgroundColor: colors.paper }} />
+
+        {/* 模式/模型选择器 */}
+        <ConfigPickerModal
+          visible={pickerTarget !== null}
+          title={pickerTarget === 'mode' ? '切换模式' : '切换模型'}
+          option={pickerOption}
+          onSelect={(value) => {
+            if (!pickerTarget) return;
+            if (pickerTarget === 'mode' && !modeOption) {
+              // ACP modes 路径: 服务器 session/set_mode
+              useChatStore.getState().optimisticMode(sessionId, value);
+              client.setMode(sessionId, value);
+              return;
+            }
+            const option = pickerTarget === 'mode' ? modeOption : modelOption;
+            const configId = option?.id ?? pickerTarget;
+            useChatStore.getState().optimisticConfigValue(sessionId, configId, value);
+            client.setConfig(sessionId, configId, value);
+          }}
+          onClose={() => setPickerTarget(null)}
+        />
+      </View>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = StyleSheet.create({
+  page: { flex: 1, backgroundColor: colors.paper },
+  chatBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 10,
+    borderBottomWidth: 2,
+    borderBottomColor: colors.ink,
+  },
+  backBtn: { paddingHorizontal: 2 },
+  chatBarMain: { flex: 1, minWidth: 0 },
+  pillsRow: { flexDirection: 'row', gap: 4, marginTop: 4 },
+  pill: {
+    borderWidth: 1,
+    borderColor: colors.ink,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+  },
+  statusDot: { width: 7, height: 7, marginLeft: 6 },
+  offlineBar: {
+    backgroundColor: colors.accSoft,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.hairline,
+    paddingVertical: 7,
+    alignItems: 'center',
+  },
+  flowContent: { paddingHorizontal: 12, paddingVertical: 12 },
+  emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  resolvedBar: {
+    borderTopWidth: 1,
+    borderTopColor: colors.hairline,
+    backgroundColor: colors.paper2,
+    paddingVertical: 7,
+    alignItems: 'center',
+  },
+});

@@ -1,0 +1,25 @@
+{
+  "name": "devin-remote",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remote control plane for Devin CLI — ACP bridge server, VSIX tunnel extension, mobile client",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:server": "npm run build --workspace=packages/server",
+    "build:ext": "node packages/extension/build.mjs",
+    "start:server": "node packages/server/dist/index.js",
+    "test:e2e": "node scripts/e2e-test.mjs",
+    "package:vsix": "cd packages/extension && npx @vscode/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

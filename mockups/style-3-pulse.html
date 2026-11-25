@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-style="pulse">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>霓虹脉冲 · Pulse — Devin Remote 风格样稿</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+/* ===== 霓虹脉冲 · Pulse — 赛博暗夜 ===== */
+:root {
+  --bg: #0a0817;
+  --bg-2: #100c22;
+  --glass: rgba(255, 255, 255, 0.045);
+  --glass-hi: rgba(255, 255, 255, 0.09);
+  --line: rgba(255, 255, 255, 0.09);
+  --line-hi: rgba(255, 255, 255, 0.18);
+  --ink: #efedff;
+  --ink-2: #9d97c4;
+  --ink-3: #5d5883;
+  --violet: #8b5cf6;
+  --cyan: #22d3ee;
+  --pink: #f472b6;
+  --acc: var(--cyan);
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --danger: #fb7185;
+  --radius: 14px;
+  --mono: 'JetBrains Mono', Consolas, monospace;
+  --sans: 'Outfit', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  --grad: linear-gradient(120deg, var(--violet), var(--cyan));
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--sans);
+  background:
+    radial-gradient(900px 600px at 15% 0%, rgba(139, 92, 246, 0.16), transparent 55%),
+    radial-gradient(800px 500px at 90% 20%, rgba(34, 211, 238, 0.1), transparent 55%),
+    radial-gradient(700px 700px at 50% 100%, rgba(244, 114, 182, 0.06), transparent 55%),
+    var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+.mono { font-family: var(--mono); }
+button { font-family: inherit; cursor: pointer; }
+
+[data-enter] { opacity: 0; transform: translateY(16px) scale(.985); transition: opacity .55s ease, transform .55s cubic-bezier(.2,.75,.3,1.1); }
+[data-enter].entered { opacity: 1; transform: none; }
+
+/* ---- 板头 ---- */
+.board-head { max-width: 1360px; margin: 0 auto; padding: 40px 32px 8px; }
+.back-link { color: var(--ink-2); text-decoration: none; font-size: 13px; font-family: var(--mono); transition: color .2s; }
+.back-link:hover { color: var(--cyan); }
+.board-title-row { display: flex; align-items: baseline; gap: 16px; margin-top: 16px; }
+.style-index { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; color: var(--cyan); border: 1px solid rgba(34,211,238,.4); padding: 4px 10px; border-radius: 99px; box-shadow: 0 0 16px -4px rgba(34,211,238,.5); }
+.style-name { font-size: 38px; font-weight: 800; letter-spacing: -0.02em; background: linear-gradient(100deg, #fff 30%, var(--cyan) 70%, var(--violet)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.style-philosophy { color: var(--ink-2); font-size: 14px; margin-top: 10px; max-width: 540px; line-height: 1.75; }
+
+.board { max-width: 1360px; margin: 0 auto; padding: 24px 32px 52px; }
+.group { margin-top: 40px; }
+.group-head h2 { font-size: 17px; font-weight: 700; display: flex; align-items: baseline; gap: 12px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.group-sub { font-size: 11px; font-weight: 400; color: var(--ink-3); font-family: var(--mono); }
+.phone-row { display: flex; flex-wrap: wrap; gap: 26px; margin-top: 26px; }
+.desktop-row { display: flex; flex-wrap: wrap; gap: 26px; margin-top: 26px; align-items: flex-start; }
+
+/* ---- 手机框 ---- */
+.phone {
+  width: 300px; flex: none;
+  background: rgba(20, 16, 42, 0.7);
+  border: 1px solid var(--line-hi);
+  border-radius: 32px;
+  padding: 8px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.6), 0 0 40px -18px rgba(139,92,246,.5);
+  backdrop-filter: blur(10px);
+  transition: transform .25s ease, box-shadow .25s ease;
+}
+.phone:hover { transform: translateY(-4px); box-shadow: 0 28px 70px rgba(0,0,0,.65), 0 0 50px -12px rgba(34,211,238,.4); }
+.phone-screen { border-radius: 24px; overflow: hidden; background: linear-gradient(170deg, #151030, #0b0919 60%); height: 620px; display: flex; flex-direction: column; border: 1px solid rgba(255,255,255,.05); }
+.statusbar { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px 4px; font-family: var(--mono); font-size: 10px; color: var(--ink-2); flex: none; }
+.sb-icons { display: inline-flex; gap: 4px; align-items: center; }
+.sb-signal { width: 12px; height: 8px; clip-path: polygon(0 100%, 0 60%, 20% 60%, 20% 100%, 30% 100%, 30% 40%, 50% 40%, 50% 100%, 60% 100%, 60% 20%, 80% 20%, 80% 100%, 90% 100%, 90% 0, 100% 0, 100% 100%); background-color: var(--ink-2); }
+.sb-wifi { width: 10px; height: 8px; border-radius: 50%; border: 2px solid var(--ink-2); border-bottom-color: transparent; border-left-color: transparent; transform: rotate(-45deg); }
+.sb-batt { width: 16px; height: 8px; border: 1px solid var(--ink-2); border-radius: 3px; position: relative; }
+.sb-batt::after { content: ''; position: absolute; inset: 1px; right: 4px; background: var(--cyan); border-radius: 2px; box-shadow: 0 0 4px var(--cyan); }
+.scr { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+
+.app-bar { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px 10px; border-bottom: 1px solid var(--line); flex: none; }
+.app-bar-title { font-weight: 700; font-size: 15px; background: linear-gradient(90deg, #fff, var(--cyan)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.host-chip { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 9px; color: var(--cyan); background: rgba(34,211,238,.08); border: 1px solid rgba(34,211,238,.25); padding: 4px 8px; border-radius: 99px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; flex: none; }
+.dot-ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+.dot-warn { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+
+.chip-row { display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); flex: none; }
+.fchip { font-size: 10.5px; color: var(--ink-2); border: 1px solid var(--line); padding: 5px 11px; border-radius: 99px; display: inline-flex; align-items: center; gap: 5px; transition: all .18s; cursor: pointer; background: var(--glass); }
+.fchip:hover { border-color: var(--line-hi); color: var(--ink); }
+.fchip.on { background: rgba(34,211,238,.13); color: var(--cyan); border-color: rgba(34,211,238,.45); box-shadow: 0 0 14px -4px rgba(34,211,238,.6); }
+.fchip.hot b { background: linear-gradient(120deg, var(--warn), var(--pink)); color: #160a24; font-size: 9px; min-width: 14px; height: 14px; border-radius: 99px; display: inline-flex; align-items: center; justify-content: center; font-family: var(--mono); font-weight: 700; }
+
+.sess-list { flex: 1; overflow: hidden; }
+.sess-row { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.05); cursor: pointer; transition: background .18s; position: relative; }
+.sess-row:hover { background: var(--glass); }
+.sess-row.warn { background: linear-gradient(90deg, rgba(251,191,36,.09), transparent 70%); }
+.sess-row.warn::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: linear-gradient(to bottom, var(--warn), transparent); box-shadow: 0 0 8px var(--warn); }
+.sess-row.live::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: linear-gradient(to bottom, var(--cyan), transparent); box-shadow: 0 0 8px var(--cyan); }
+.sess-row.dim { opacity: .5; }
+.sess-main { flex: 1; min-width: 0; }
+.sess-title { font-size: 12.5px; font-weight: 600; }
+.sess-meta { font-family: var(--mono); font-size: 9px; color: var(--ink-3); margin-top: 4px; }
+.sess-snippet { font-size: 11px; color: var(--ink-2); margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sess-badge { flex: none; font-size: 9px; padding: 4px 8px; border-radius: 99px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
+.b-warn { background: rgba(251,191,36,.13); color: var(--warn); border: 1px solid rgba(251,191,36,.4); box-shadow: 0 0 12px -4px rgba(251,191,36,.7); }
+.b-live { background: rgba(34,211,238,.13); color: var(--cyan); border: 1px solid rgba(34,211,238,.4); }
+.b-done { background: var(--glass-hi); color: var(--ink-2); border: 1px solid var(--line); }
+.b-dim { background: transparent; color: var(--ink-3); border: 1px solid var(--line); }
+.pulse { width: 5px; height: 5px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 6px var(--cyan); animation: pulse 1.4s ease infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.65); } }
+
+.tabbar { flex: none; display: flex; border-top: 1px solid var(--line); background: rgba(10,8,23,.8); backdrop-filter: blur(12px); }
+.tab { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 9px 0 10px; font-size: 9.5px; color: var(--ink-3); cursor: pointer; transition: color .18s; }
+.tab:hover { color: var(--ink-2); }
+.tab.on { color: var(--cyan); text-shadow: 0 0 10px rgba(34,211,238,.7); }
+.ti { width: 15px; height: 15px; display: block; border: 1.5px solid currentColor; border-radius: 4px; }
+.ti-chat { clip-path: polygon(0 0, 100% 0, 100% 70%, 60% 70%, 40% 100%, 40% 70%, 0 70%); }
+.ti-cog { border-radius: 50%; }
+
+/* 聊天 */
+.chat-bar { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); flex: none; }
+.chat-back { font-size: 18px; color: var(--ink-2); cursor: pointer; transition: color .15s; }
+.chat-back:hover { color: var(--cyan); }
+.chat-bar-main { flex: 1; min-width: 0; }
+.chat-title { font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-pills { display: flex; gap: 4px; margin-top: 4px; }
+.pill { font-family: var(--mono); font-size: 8px; color: var(--violet); background: rgba(139,92,246,.14); border: 1px solid rgba(139,92,246,.4); padding: 2px 7px; border-radius: 99px; }
+.pill + .pill { color: var(--cyan); background: rgba(34,211,238,.12); border-color: rgba(34,211,238,.4); }
+.chat-more { color: var(--ink-3); cursor: pointer; }
+.msg-flow { flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 9px; overflow: hidden; }
+.msg { display: flex; }
+.msg.user { justify-content: flex-end; }
+.msg-body { max-width: 86%; font-size: 11.5px; line-height: 1.65; padding: 9px 12px; border-radius: 14px; }
+.msg.user .msg-body { background: linear-gradient(120deg, var(--violet), #6d4de0); color: #fff; border-bottom-right-radius: 4px; box-shadow: 0 4px 18px -6px rgba(139,92,246,.6); }
+.msg.agent .msg-body { background: var(--glass-hi); border: 1px solid var(--line); border-bottom-left-radius: 4px; color: var(--ink); backdrop-filter: blur(8px); }
+.msg.streaming .msg-body { border-color: rgba(34,211,238,.35); box-shadow: 0 0 20px -8px rgba(34,211,238,.5); }
+.cursor { color: var(--cyan); animation: blink 1s steps(1) infinite; text-shadow: 0 0 8px var(--cyan); }
+@keyframes blink { 50% { opacity: 0; } }
+
+.tool-card { background: var(--glass); border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; transition: all .18s; cursor: pointer; backdrop-filter: blur(6px); }
+.tool-card:hover { border-color: rgba(34,211,238,.35); background: var(--glass-hi); }
+.tc-head { display: flex; justify-content: space-between; align-items: center; }
+.tc-name { font-family: var(--mono); font-size: 10.5px; font-weight: 700; color: var(--pink); }
+.tc-status { font-family: var(--mono); font-size: 9px; color: var(--ink-3); }
+.tc-status.ok { color: var(--ok); }
+.tc-detail { font-family: var(--mono); font-size: 9.5px; color: var(--ink-2); margin-top: 5px; }
+.add { color: var(--ok); font-weight: 700; font-style: normal; }
+.del { color: var(--danger); font-weight: 700; font-style: normal; }
+
+.input-bar { flex: none; display: flex; align-items: center; gap: 8px; margin: 10px 12px 12px; background: var(--glass-hi); border: 1px solid var(--line-hi); border-radius: 99px; padding: 6px 8px 6px 14px; backdrop-filter: blur(10px); }
+.ib-plus { color: var(--ink-3); font-size: 13px; cursor: pointer; }
+.ib-hint { flex: 1; font-size: 11px; color: var(--ink-3); }
+.ib-send { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(120deg, var(--violet), var(--cyan)); color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; cursor: pointer; transition: transform .15s; box-shadow: 0 0 14px -2px rgba(34,211,238,.7); }
+.ib-send:hover { transform: translateY(-2px) scale(1.05); }
+.ib-send:active { transform: scale(.95); }
+
+/* 权限审批 */
+.perm-wrap { flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.perm-card { background: linear-gradient(160deg, rgba(251,191,36,.1), transparent 55%), rgba(20,16,42,.85); border: 1px solid rgba(251,191,36,.5); border-radius: 18px; padding: 15px 14px; text-align: center; animation: permGlow 2.6s ease infinite; backdrop-filter: blur(10px); }
+@keyframes permGlow { 0%, 100% { box-shadow: 0 0 0 0 rgba(251,191,36,0); } 50% { box-shadow: 0 0 32px -4px rgba(251,191,36,.35); } }
+.perm-shield { font-size: 22px; }
+.perm-title { font-size: 15px; font-weight: 700; margin-top: 6px; }
+.perm-tool { display: inline-block; font-family: var(--mono); font-size: 9px; color: var(--pink); border: 1px solid rgba(244,114,182,.45); padding: 2px 8px; border-radius: 99px; margin-top: 9px; }
+.perm-cmd { font-family: var(--mono); font-size: 12px; background: rgba(0,0,0,.4); border: 1px solid rgba(251,191,36,.3); padding: 9px 11px; border-radius: 10px; margin-top: 8px; color: var(--warn); font-weight: 500; word-break: break-all; text-shadow: 0 0 10px rgba(251,191,36,.4); }
+.perm-desc { font-size: 10.5px; color: var(--ink-2); margin-top: 9px; line-height: 1.65; }
+.perm-meta { font-family: var(--mono); font-size: 9px; color: var(--ink-3); margin-top: 6px; }
+.perm-actions { display: flex; gap: 7px; margin-top: 13px; }
+.pa { flex: 1; font-size: 11px; font-weight: 600; padding: 10px 6px; border-radius: 99px; border: 1px solid var(--line-hi); background: var(--glass-hi); color: var(--ink); transition: all .16s; backdrop-filter: blur(6px); }
+.pa:hover { border-color: var(--ink-2); transform: translateY(-2px); }
+.pa:active { transform: translateY(1px); }
+.pa.primary { background: linear-gradient(120deg, var(--violet), var(--cyan)); border: none; color: #fff; box-shadow: 0 4px 18px -4px rgba(139,92,246,.7); }
+.pa.primary:hover { filter: brightness(1.15); box-shadow: 0 6px 24px -4px rgba(34,211,238,.7); }
+.pa.danger { color: var(--danger); }
+.pa.danger:hover { border-color: var(--danger); background: rgba(251,113,133,.1); }
+
+.plan-card { background: var(--glass); border: 1px solid var(--line); border-radius: 14px; padding: 12px; backdrop-filter: blur(6px); }
+.plan-head { font-family: var(--mono); font-size: 9px; color: var(--ink-3); margin-bottom: 8px; letter-spacing: .08em; }
+.plan-item { font-size: 11px; color: var(--ink-2); padding: 4px 0; }
+.plan-item.done { color: var(--ink-3); text-decoration: line-through; }
+.plan-item.doing { color: var(--cyan); font-weight: 600; text-shadow: 0 0 12px rgba(34,211,238,.5); }
+.perm-queue { font-family: var(--mono); font-size: 8.5px; color: var(--ink-3); background: var(--glass); border: 1px dashed var(--line-hi); border-radius: 10px; padding: 8px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 配对 */
+.pair-host { margin: 12px 14px 0; background: var(--glass); border: 1px solid rgba(34,211,238,.25); border-radius: 14px; padding: 11px 12px; backdrop-filter: blur(6px); }
+.ph-name { font-family: var(--mono); font-size: 12px; color: var(--cyan); font-weight: 500; text-shadow: 0 0 12px rgba(34,211,238,.5); }
+.ph-sub { font-size: 10px; color: var(--ink-2); margin-top: 4px; }
+.pair-card { margin: 10px 14px 0; background: var(--glass); border: 1px solid var(--line-hi); border-radius: 18px; padding: 14px; text-align: center; backdrop-filter: blur(8px); }
+.pair-title { font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+.qr { width: 96px; height: 96px; margin: 12px auto 0; display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; background: rgba(255,255,255,.92); padding: 8px; border-radius: 12px; box-shadow: 0 0 24px -6px rgba(34,211,238,.5); }
+.qr.big { width: 120px; height: 120px; margin: 0; flex: none; }
+.qr i { background: transparent; border-radius: 1px; }
+.qr i:nth-child(1), .qr i:nth-child(2), .qr i:nth-child(6), .qr i:nth-child(7),
+.qr i:nth-child(4), .qr i:nth-child(5), .qr i:nth-child(9), .qr i:nth-child(10),
+.qr i:nth-child(16), .qr i:nth-child(17), .qr i:nth-child(21), .qr i:nth-child(22),
+.qr i:nth-child(3), .qr i:nth-child(8), .qr i:nth-child(12), .qr i:nth-child(13),
+.qr i:nth-child(14), .qr i:nth-child(15), .qr i:nth-child(19), .qr i:nth-child(20),
+.qr i:nth-child(23), .qr i:nth-child(25), .qr i:nth-child(18) { background: #160a2e; }
+.pair-code { font-family: var(--mono); font-size: 20px; font-weight: 700; letter-spacing: .2em; margin-top: 12px; background: linear-gradient(90deg, var(--cyan), var(--violet)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.pair-code.big { font-size: 24px; margin-top: 0; }
+.pair-expire { font-size: 10px; color: var(--ink-2); margin-top: 6px; }
+.pair-expire b { color: var(--warn); font-family: var(--mono); }
+.pair-note { font-size: 9.5px; color: var(--ink-3); margin-top: 8px; line-height: 1.6; }
+.dev-list { margin: 10px 14px 0; display: flex; flex-direction: column; gap: 6px; }
+.dev-row { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--glass); transition: all .15s; }
+.dev-row:hover { border-color: var(--line-hi); }
+.dev-row.self { background: rgba(34,211,238,.08); border-color: rgba(34,211,238,.3); }
+.dev-main { flex: 1; }
+.dev-name { font-size: 11.5px; font-weight: 600; }
+.dev-meta { font-family: var(--mono); font-size: 8.5px; color: var(--ink-3); margin-top: 3px; }
+.dev-tag { font-size: 8.5px; color: var(--cyan); border: 1px solid rgba(34,211,238,.45); padding: 2px 7px; border-radius: 99px; }
+.dev-revoke { font-size: 10px; color: var(--danger); background: none; border: 1px solid var(--line-hi); padding: 4px 10px; border-radius: 99px; transition: all .15s; }
+.dev-revoke:hover { border-color: var(--danger); background: rgba(251,113,133,.1); }
+.lan-row { margin: 10px 14px; font-family: var(--mono); font-size: 8.5px; color: var(--ink-3); text-align: center; }
+
+/* ---- 桌面面板 ---- */
+.desktop { flex: 1; min-width: 620px; max-width: 900px; background: rgba(16,12,34,.75); border: 1px solid var(--line-hi); border-radius: 18px; overflow: hidden; box-shadow: 0 24px 70px rgba(0,0,0,.55), 0 0 50px -20px rgba(139,92,246,.5); backdrop-filter: blur(14px); }
+.win-chrome { display: flex; align-items: center; gap: 7px; background: rgba(255,255,255,.03); border-bottom: 1px solid var(--line); padding: 10px 14px; }
+.wc-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line-hi); }
+.wc-dot:nth-child(1) { background: var(--danger); box-shadow: 0 0 6px rgba(251,113,133,.6); }
+.wc-dot:nth-child(2) { background: var(--warn); box-shadow: 0 0 6px rgba(251,191,36,.6); }
+.wc-dot:nth-child(3) { background: var(--ok); box-shadow: 0 0 6px rgba(52,211,153,.6); }
+.wc-title { font-family: var(--mono); font-size: 10px; color: var(--ink-3); margin-left: 8px; }
+.panel { display: flex; height: 480px; }
+.panel-nav { width: 155px; flex: none; border-right: 1px solid var(--line); padding: 16px 10px; display: flex; flex-direction: column; gap: 4px; }
+.pn-logo { font-size: 13px; font-weight: 800; margin: 0 6px 16px; background: linear-gradient(90deg, var(--cyan), var(--violet)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.pn-item { font-size: 12px; color: var(--ink-2); padding: 8px 12px; border-radius: 10px; cursor: pointer; transition: all .16s; }
+.pn-item:hover { background: var(--glass-hi); color: var(--ink); }
+.pn-item.on { background: linear-gradient(90deg, rgba(34,211,238,.15), rgba(139,92,246,.15)); color: var(--cyan); box-shadow: inset 0 0 0 1px rgba(34,211,238,.3); }
+.pn-status { margin-top: auto; font-family: var(--mono); font-size: 9px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; padding: 8px 12px; }
+.panel-main { flex: 1; padding: 16px; overflow: hidden; }
+.stat-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.stat-card { background: var(--glass); border: 1px solid var(--line); border-radius: 14px; padding: 13px; transition: all .18s; }
+.stat-card:hover { border-color: rgba(34,211,238,.3); transform: translateY(-2px); box-shadow: 0 8px 24px -8px rgba(34,211,238,.3); }
+.sc-label { font-size: 10px; color: var(--ink-3); font-weight: 600; letter-spacing: .05em; }
+.sc-value { font-size: 20px; font-weight: 700; margin-top: 6px; }
+.sc-value.ok { color: var(--ok); text-shadow: 0 0 16px rgba(52,211,153,.6); }
+.sc-sub { font-family: var(--mono); font-size: 9px; color: var(--ink-2); margin-top: 4px; }
+.panel-grid { display: grid; grid-template-columns: 1fr 1.2fr; gap: 10px; margin-top: 10px; }
+.pair-widget, .log-widget { background: var(--glass); border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.pw-title { font-size: 11px; font-weight: 700; margin-bottom: 12px; }
+.pw-body { display: flex; gap: 14px; align-items: flex-start; }
+.pw-right { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.pw-right .pa { flex: none; padding: 8px 16px; font-size: 10.5px; }
+.log-lines { display: flex; flex-direction: column; gap: 5px; font-family: var(--mono); font-size: 9.5px; color: var(--ink-2); }
+.ll { padding: 5px 9px; background: rgba(0,0,0,.3); border-radius: 8px; border-left: 2px solid var(--line-hi); }
+.ll.ok { border-left-color: var(--ok); }
+.panel-actions { display: flex; gap: 7px; margin-top: 12px; }
+.panel-actions .pa { flex: none; padding: 7px 14px; font-size: 10px; }
+
+/* ---- 侧栏 ---- */
+.sidebar { width: 300px; flex: none; background: rgba(16,12,34,.75); border: 1px solid var(--line-hi); border-radius: 18px; overflow: hidden; box-shadow: 0 24px 70px rgba(0,0,0,.55); backdrop-filter: blur(14px); }
+.win-chrome.sm { padding: 9px 13px; }
+.side-body { height: 440px; display: flex; flex-direction: column; padding: 10px; gap: 8px; }
+.side-sess { border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px; cursor: pointer; transition: all .16s; background: var(--glass); }
+.side-sess:hover { border-color: var(--line-hi); }
+.side-sess.on { border-color: rgba(251,191,36,.45); background: linear-gradient(90deg, rgba(251,191,36,.1), transparent 75%); }
+.ss-title { font-size: 11.5px; font-weight: 600; }
+.ss-meta { display: flex; align-items: center; gap: 6px; font-size: 9px; color: var(--ink-3); margin-top: 4px; font-family: var(--mono); }
+.side-chat { flex: 1; display: flex; flex-direction: column; gap: 8px; overflow: hidden; padding-top: 4px; }
+.side-body .input-bar { margin: 0; }
+
+/* ---- 板脚 ---- */
+.board-foot { max-width: 1360px; margin: 0 auto; padding: 0 32px 44px; display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--ink-3); font-family: var(--mono); }
+.board-foot a { color: var(--cyan); text-decoration: none; }
+.board-foot a:hover { text-shadow: 0 0 12px rgba(34,211,238,.8); }
+
+@media (max-width: 720px) {
+  .board-head, .board, .board-foot { padding-left: 16px; padding-right: 16px; }
+  .style-name { font-size: 26px; }
+  .phone { width: 100%; max-width: 340px; margin: 0 auto; }
+  .desktop { min-width: 0; width: 100%; }
+  .panel { height: auto; }
+  .panel-grid { grid-template-columns: 1fr; }
+  .panel-nav { width: 110px; }
+  .sidebar { width: 100%; }
+}
+
+</style>
+</head>
+<body>
+<!-- Devin Remote — 共享内容标记（5 套皮肤共用） -->
+<header class="board-head" data-enter>
+  <a class="back-link" href="index.html">‹ 全部风格</a>
+  <div class="board-title-row">
+    <span class="style-index">03 / 05</span>
+    <h1 class="style-name">霓虹脉冲 · Pulse</h1>
+  </div>
+  <p class="style-philosophy">赛博暗夜。深紫底、电紫与青色辉光、玻璃拟态——agent 的每次心跳都看得见。</p>
+</header>
+
+<main class="board">
+  <!-- ============ 手机端 ============ -->
+  <section class="group group-phones" data-enter>
+    <div class="group-head">
+      <h2>手机端 <span class="group-sub">devin-remote-mobile · 4 个核心界面</span></h2>
+    </div>
+    <div class="phone-row">
+
+      <!-- 界面 1：会话列表 -->
+      <div class="phone" data-enter>
+        <div class="phone-screen">
+          <div class="statusbar"><span class="sb-time">9:41</span><span class="sb-icons"><i class="sb-signal"></i><i class="sb-wifi"></i><i class="sb-batt"></i></span></div>
+          <div class="scr scr-sessions">
+            <div class="app-bar">
+              <div class="app-bar-title">Devin Remote</div>
+              <div class="host-chip"><span class="dot dot-ok"></span>devin.example.com</div>
+            </div>
+            <div class="chip-row">
+              <span class="fchip on">全部</span><span class="fchip">运行中</span><span class="fchip hot">待审批<b>1</b></span><span class="fchip">已完成</span>
+            </div>
+            <div class="sess-list">
+              <div class="sess-row warn">
+                <div class="sess-main">
+                  <div class="sess-title">邮箱验证码登录改造</div>
+                  <div class="sess-meta">HAQIDevin · 2 分钟前</div>
+                  <div class="sess-snippet">等待批准：npm install nodemailer</div>
+                </div>
+                <div class="sess-badge b-warn">待审批</div>
+              </div>
+              <div class="sess-row live">
+                <div class="sess-main">
+                  <div class="sess-title">payment 模块错误处理重构</div>
+                  <div class="sess-meta">shop-api · 18 分钟前</div>
+                  <div class="sess-snippet">正在运行 npm test…</div>
+                </div>
+                <div class="sess-badge b-live"><span class="pulse"></span>运行中</div>
+              </div>
+              <div class="sess-row">
+                <div class="sess-main">
+                  <div class="sess-title">README 国际化与文档补全</div>
+                  <div class="sess-meta">HAQIDevin · 1 小时前</div>
+                  <div class="sess-snippet">已提交 PR #42，等待 review</div>
+                </div>
+                <div class="sess-badge b-done">已完成</div>
+              </div>
+              <div class="sess-row">
+                <div class="sess-main">
+                  <div class="sess-title">修复 CI lint 流水线失败</div>
+                  <div class="sess-meta">infra · 昨天</div>
+                  <div class="sess-snippet">3 个文件已修改，检查全部通过</div>
+                </div>
+                <div class="sess-badge b-done">已完成</div>
+              </div>
+              <div class="sess-row dim">
+                <div class="sess-main">
+                  <div class="sess-title">数据库连接池配置迁移</div>
+                  <div class="sess-meta">shop-api · 昨天</div>
+                  <div class="sess-snippet">已暂停 — 等待恢复</div>
+                </div>
+                <div class="sess-badge b-dim">已暂停</div>
+              </div>
+            </div>
+            <div class="tabbar">
+              <span class="tab on"><i class="ti ti-chat"></i>会话</span>
+              <span class="tab"><i class="ti ti-dev"></i>设备</span>
+              <span class="tab"><i class="ti ti-cog"></i>我的</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 界面 2：流式对话 -->
+      <div class="phone" data-enter>
+        <div class="phone-screen">
+          <div class="statusbar"><span class="sb-time">9:41</span><span class="sb-icons"><i class="sb-signal"></i><i class="sb-wifi"></i><i class="sb-batt"></i></span></div>
+          <div class="scr scr-chat">
+            <div class="chat-bar">
+              <span class="chat-back">‹</span>
+              <div class="chat-bar-main">
+                <div class="chat-title">邮箱验证码登录改造</div>
+                <div class="chat-pills"><span class="pill">Normal</span><span class="pill">SWE-2.1 Max</span></div>
+              </div>
+              <span class="chat-more">⋯</span>
+            </div>
+            <div class="msg-flow">
+              <div class="msg user"><div class="msg-body">帮我把登录页改成支持邮箱验证码登录，控制台那个 hydration 报错也顺便修一下</div></div>
+              <div class="msg agent"><div class="msg-body">好的。我先看现在登录页的实现和 AuthProvider 的挂载方式，再动手改。</div></div>
+              <div class="tool-card done">
+                <div class="tc-head"><span class="tc-name">read</span><span class="tc-status ok">✓ 完成</span></div>
+                <div class="tc-detail mono">src/pages/login.tsx · 214 行</div>
+              </div>
+              <div class="tool-card done">
+                <div class="tc-head"><span class="tc-name">exec</span><span class="tc-status ok">✓ exit 0 · 12.4s</span></div>
+                <div class="tc-detail mono">npm run test — 26 passed, 0 failed</div>
+              </div>
+              <div class="tool-card done">
+                <div class="tc-head"><span class="tc-name">edit</span><span class="tc-status ok">✓ 完成</span></div>
+                <div class="tc-detail mono">src/pages/login.tsx <b class="add">+42</b> <b class="del">−18</b></div>
+              </div>
+              <div class="msg agent streaming"><div class="msg-body"><span class="type-target">正在检查 AuthProvider 的挂载时机——hydration 报错很可能是服务端渲染时 useEffect 未执行导致的，我先定位到具体的组件…</span><span class="cursor">▍</span></div></div>
+            </div>
+            <div class="input-bar">
+              <span class="ib-plus">＋</span>
+              <span class="ib-hint">输入消息，或 / 命令</span>
+              <span class="ib-send">↑</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 界面 3：权限审批 -->
+      <div class="phone" data-enter>
+        <div class="phone-screen">
+          <div class="statusbar"><span class="sb-time">9:42</span><span class="sb-icons"><i class="sb-signal"></i><i class="sb-wifi"></i><i class="sb-batt"></i></span></div>
+          <div class="scr scr-perm">
+            <div class="chat-bar">
+              <span class="chat-back">‹</span>
+              <div class="chat-bar-main">
+                <div class="chat-title">邮箱验证码登录改造</div>
+                <div class="chat-pills"><span class="pill">Normal</span><span class="pill">SWE-2.1 Max</span></div>
+              </div>
+              <span class="chat-more">⋯</span>
+            </div>
+            <div class="perm-wrap">
+              <div class="perm-card" data-pulse>
+                <div class="perm-shield">🛡</div>
+                <div class="perm-title">需要你的批准</div>
+                <div class="perm-tool mono">exec</div>
+                <div class="perm-cmd mono">npm install nodemailer</div>
+                <div class="perm-desc">将安装新依赖，并修改 package.json 与 package-lock.json</div>
+                <div class="perm-meta mono">工作目录 · HAQIDevin</div>
+                <div class="perm-actions">
+                  <button class="pa primary">允许一次</button>
+                  <button class="pa">总是允许</button>
+                  <button class="pa danger">拒绝</button>
+                </div>
+              </div>
+              <div class="plan-card">
+                <div class="plan-head">计划 · 3/5</div>
+                <div class="plan-item done">✓ 接入验证码接口</div>
+                <div class="plan-item done">✓ 登录页 UI 改造</div>
+                <div class="plan-item doing">● 安装 nodemailer 依赖</div>
+                <div class="plan-item">○ 补充集成测试</div>
+                <div class="plan-item">○ 修复 hydration 报错</div>
+              </div>
+              <div class="perm-queue mono">下一条待审批 · exec git commit -m "feat: email code login"</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 界面 4：设备与配对 -->
+      <div class="phone" data-enter>
+        <div class="phone-screen">
+          <div class="statusbar"><span class="sb-time">9:43</span><span class="sb-icons"><i class="sb-signal"></i><i class="sb-wifi"></i><i class="sb-batt"></i></span></div>
+          <div class="scr scr-pair">
+            <div class="app-bar">
+              <div class="app-bar-title">设备</div>
+              <div class="host-chip"><span class="dot dot-ok"></span>TLS · 68ms</div>
+            </div>
+            <div class="pair-host">
+              <div class="ph-name mono">devin.example.com</div>
+              <div class="ph-sub">Cloudflare Tunnel · 已连接 6 小时</div>
+            </div>
+            <div class="pair-card">
+              <div class="pair-title">添加新设备</div>
+              <div class="qr"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <div class="pair-code mono">K7QM-2XFD</div>
+              <div class="pair-expire">有效期剩余 <b class="countdown">04:32</b></div>
+              <div class="pair-note">配对码在桌面端「Devin Remote」面板生成，一次性使用</div>
+            </div>
+            <div class="dev-list">
+              <div class="dev-row self">
+                <div class="dev-main"><div class="dev-name">iPhone 15 Pro</div><div class="dev-meta">本机 · 活跃中</div></div>
+                <span class="dev-tag">当前设备</span>
+              </div>
+              <div class="dev-row">
+                <div class="dev-main"><div class="dev-name">Pixel 8</div><div class="dev-meta">2 小时前活跃</div></div>
+                <button class="dev-revoke">撤销</button>
+              </div>
+              <div class="dev-row">
+                <div class="dev-main"><div class="dev-name">MacBook 浏览器</div><div class="dev-meta">12 天前活跃</div></div>
+                <button class="dev-revoke">撤销</button>
+              </div>
+            </div>
+            <div class="lan-row mono">局域网直连 · 192.168.1.8:8787 · 已启用</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ VSIX 插件 ============ -->
+  <section class="group group-desktop" data-enter>
+    <div class="group-head">
+      <h2>VSIX 插件 <span class="group-sub">devin-remote-vscode · 控制面板 + 侧栏</span></h2>
+    </div>
+    <div class="desktop-row">
+
+      <!-- 控制面板 webview -->
+      <div class="desktop" data-enter>
+        <div class="win-chrome"><span class="wc-dot"></span><span class="wc-dot"></span><span class="wc-dot"></span><span class="wc-title">Devin Desktop — Devin Remote 控制面板</span></div>
+        <div class="panel">
+          <nav class="panel-nav">
+            <div class="pn-logo">◈ Devin Remote</div>
+            <span class="pn-item on">概览</span>
+            <span class="pn-item">设备</span>
+            <span class="pn-item">日志</span>
+            <span class="pn-item">设置</span>
+            <div class="pn-status"><span class="dot dot-ok"></span>服务正常</div>
+          </nav>
+          <div class="panel-main">
+            <div class="stat-cards">
+              <div class="stat-card">
+                <div class="sc-label">Cloudflare 隧道</div>
+                <div class="sc-value ok">已连接</div>
+                <div class="sc-sub mono">4/4 连接 · 在线 6h 12m</div>
+                <div class="sc-sub mono">devin.example.com</div>
+              </div>
+              <div class="stat-card">
+                <div class="sc-label">本地服务</div>
+                <div class="sc-value ok">运行中</div>
+                <div class="sc-sub mono">127.0.0.1:8787</div>
+                <div class="sc-sub mono">2 个活跃会话</div>
+              </div>
+              <div class="stat-card">
+                <div class="sc-label">已配对设备</div>
+                <div class="sc-value">3 台</div>
+                <div class="sc-sub mono">1 台当前在线</div>
+                <div class="sc-sub mono">iPhone 15 Pro 等</div>
+              </div>
+            </div>
+            <div class="panel-grid">
+              <div class="pair-widget">
+                <div class="pw-title">设备配对</div>
+                <div class="pw-body">
+                  <div class="qr big"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                  <div class="pw-right">
+                    <div class="pair-code mono big">K7QM-2XFD</div>
+                    <div class="pair-expire">有效期剩余 <b class="countdown">04:32</b></div>
+                    <button class="pa primary">生成新配对码</button>
+                  </div>
+                </div>
+              </div>
+              <div class="log-widget">
+                <div class="pw-title">健康检查日志</div>
+                <div class="log-lines mono">
+                  <div class="ll ok">14:02:11 健康检查通过 · 212ms</div>
+                  <div class="ll ok">14:02:01 健康检查通过 · 198ms</div>
+                  <div class="ll ok">14:01:51 健康检查通过 · 204ms</div>
+                  <div class="ll">13:58:44 tunnel 连接已注册 (4/4)</div>
+                  <div class="ll">13:58:31 cloudflared 已启动 · v2024.11.0</div>
+                  <div class="ll">13:58:30 本地服务已就绪 · 127.0.0.1:8787</div>
+                </div>
+                <div class="panel-actions">
+                  <button class="pa">重新连接</button>
+                  <button class="pa">复制诊断信息</button>
+                  <button class="pa danger">停止服务</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 侧栏聊天 -->
+      <div class="sidebar" data-enter>
+        <div class="win-chrome sm"><span class="wc-title">DEVIN REMOTE · 侧栏</span></div>
+        <div class="side-body">
+          <div class="side-sess on">
+            <div class="ss-title">邮箱验证码登录改造</div>
+            <div class="ss-meta"><span class="dot dot-warn"></span>待审批 · 2 分钟前</div>
+          </div>
+          <div class="side-sess">
+            <div class="ss-title">payment 错误处理重构</div>
+            <div class="ss-meta"><span class="dot dot-ok"></span>运行中 · 18 分钟前</div>
+          </div>
+          <div class="side-chat">
+            <div class="msg user"><div class="msg-body">测试也都一并改了</div></div>
+            <div class="msg agent"><div class="msg-body">收到，我会在集成测试里补上验证码过期和错误重试的分支。</div></div>
+            <div class="tool-card done">
+              <div class="tc-head"><span class="tc-name">write</span><span class="tc-status ok">✓ 完成</span></div>
+              <div class="tc-detail mono">tests/login-code.spec.ts <b class="add">+87</b></div>
+            </div>
+          </div>
+          <div class="input-bar">
+            <span class="ib-hint">继续对话…</span>
+            <span class="ib-send">↑</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="board-foot">
+  <span>Devin Remote · UI 风格样稿 — 内容均为示意数据</span>
+  <a href="index.html">返回风格选择 ›</a>
+</footer>
+
+<script>
+// 配对码倒计时
+document.querySelectorAll('.countdown').forEach(el => {
+  let s = 4 * 60 + 32;
+  setInterval(() => {
+    s = s > 0 ? s - 1 : 4 * 60 + 32;
+    el.textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  }, 1000);
+});
+// 流式打字循环
+document.querySelectorAll('.type-target').forEach(el => {
+  const full = el.textContent;
+  let i = full.length;
+  setInterval(() => {
+    i = i >= full.length + 24 ? 1 : i + 1;
+    el.textContent = full.slice(0, Math.min(i, full.length));
+  }, 55);
+});
+// 进入动画
+requestAnimationFrame(() => document.querySelectorAll('[data-enter]').forEach((el, i) => {
+  setTimeout(() => el.classList.add('entered'), 60 * i);
+}));
+</script>
+</body>
+</html>
