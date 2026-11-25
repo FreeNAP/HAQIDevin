@@ -19,6 +19,11 @@ const VERSION = '0.1.0';
 
 async function main() {
   const config = loadConfig();
+  // 环境变量覆盖端口 (测试/多实例场景)
+  if (process.env.DEVIN_REMOTE_PORT) {
+    const p = parseInt(process.env.DEVIN_REMOTE_PORT, 10);
+    if (!Number.isNaN(p)) config.port = p;
+  }
   const { key, source } = loadDevinApiKey();
 
   console.log(`[devin-remote] v${VERSION}`);

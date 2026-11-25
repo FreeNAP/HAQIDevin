@@ -69,7 +69,21 @@ export class TunnelManager {
     const cfg = vscode.workspace.getConfiguration('devin-remote');
     const token = cfg.get<string>('tunnelToken') ?? '';
     const hostname = cfg.get<string>('publicHostname') ?? '';
-    if (!token || !hostname) {
+    // 本地 config 文件模式优先 (ingress 在文件里, 适配国内网络 protocol: http2)
+    const { homedir } = await import('node:os');
+    const localConfig = join(homedir(), '.cloudflared', 'config-devin.yml');
+    const useConfigFile = existsSync(localConfig);
+
+    // 公网已在线 (外部启动的隧道, 如 start-tunnel.pyw)? 直接接管状态, 不再 spawn 冲突进程
+    if (hostname && await this.probePublic(hostname)) {
+      this.setState('connected');
+      this.startHealthLoop();
+      return;
+    }
+
+    if (!useConfigFile && (!token || !hostname)) {
+      // 无自管能力但有域名: 仍启动探测循环, 外部隧道上线时面板能及时反映
+      if (hostname) this.startHealthLoop();
       this.setState('off', '未配置隧道 token 或域名');
       return;
     }
@@ -77,16 +91,19 @@ export class TunnelManager {
     this.stoppedByUser = false;
     try {
       const bin = await this.ensureBinary();
-      this.spawn(bin, token);
+      const args = useConfigFile
+        ? ['tunnel', '--config', localConfig, '--no-autoupdate', 'run']
+        : ['tunnel', '--no-autoupdate', 'run', '--token', token];
+      this.spawn(bin, args);
     } catch (e) {
       this.lastError = String((e as Error).message);
       this.setState('error', this.lastError);
     }
   }
 
-  private spawn(bin: string, token: string): void {
+  private spawn(bin: string, args: string[]): void {
     this.setState('connecting');
-    const child = spawn(bin, ['tunnel', '--no-autoupdate', 'run', '--token', token], {
+    const child = spawn(bin, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     this.child = child;
@@ -109,7 +126,7 @@ export class TunnelManager {
       this.child = null;
       if (!this.stoppedByUser) {
         this.setState('connecting', `cloudflared 退出 code=${code}, 3s 后重连`);
-        setTimeout(() => { if (!this.stoppedByUser) this.spawn(bin, token); }, 3000);
+        setTimeout(() => { if (!this.stoppedByUser) this.spawn(bin, args); }, 3000);
       } else {
         this.setState('off');
       }
@@ -118,13 +135,26 @@ export class TunnelManager {
     this.startHealthLoop();
   }
 
-  /** 公网回环健康检查: 走 Cloudflare 打自己, 验证端到端 */
+  /** 单次公网回环探测 */
+  private async probePublic(hostname: string): Promise<boolean> {
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 8000);
+      const r = await fetch(`https://${hostname}/api/health`, { signal: ctl.signal });
+      clearTimeout(t);
+      return r.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  /** 公网回环健康检查: 走 Cloudflare 打自己, 验证端到端 — 独立于自管进程, 外部启动的隧道同样识别 */
   private startHealthLoop(): void {
     if (this.healthTimer) clearInterval(this.healthTimer);
     this.healthTimer = setInterval(async () => {
       const cfg = vscode.workspace.getConfiguration('devin-remote');
       const hostname = cfg.get<string>('publicHostname') ?? '';
-      if (!hostname || !this.child) return;
+      if (!hostname) return;
       try {
         const ctl = new AbortController();
         const t = setTimeout(() => ctl.abort(), 8000);
@@ -139,10 +169,19 @@ export class TunnelManager {
       } catch {
         this.failStreak++;
       }
+      // 仅在自管进程或曾在线的情况下才降级; 外部从未在线时保持 off
       if (this.failStreak >= 3 && this.state === 'connected') {
         this.setState('degraded', '公网回环连续失败');
       }
     }, 20000);
+  }
+
+  /** 外部探测模式: 插件未自管隧道时, 仅依据公网回环反映真实可达性 (识别 start-tunnel.pyw 等外部启动) */
+  startExternalProbe(): void {
+    if (this.child) return; // 自管模式已由 start() 启动探测
+    const cfg = vscode.workspace.getConfiguration('devin-remote');
+    if (!cfg.get<string>('publicHostname')) return;
+    this.startHealthLoop();
   }
 
   async stop(): Promise<void> {

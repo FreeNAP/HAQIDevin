@@ -27,6 +27,7 @@ export interface SessionMeta {
   modelId?: string;
   lastSeq: number;            // 当前最大事件序号
   hasPendingPermission: boolean;
+  additionalDirectories?: string[];  // devin 会话附加工作目录 (fs 监狱一并放行)
 }
 
 // ---------- 事件封装 ----------
@@ -87,11 +88,44 @@ export interface SessionCreate {
   cwd: string;
 }
 
+/** prompt 附件: 图片走 ACP image block, 文本资源走 embedded context */
+export interface PromptAttachment {
+  type: 'image' | 'resource_text';
+  mimeType: string;
+  fileName?: string;
+  data?: string;            // image: base64
+  text?: string;            // resource_text: 文件内容
+  uri?: string;             // resource_text: file:// uri
+}
+
 export interface SessionPromptMsg {
   type: 'session.prompt';
   sessionId: string;
   text: string;
   clientMsgId: string;      // 客户端生成, 幂等去重
+  attachments?: PromptAttachment[];
+}
+
+/** devin 侧会话 (session/list 返回项) — 含 Devin Desktop 创建的会话 */
+export interface DevinSessionInfo {
+  sessionId: string;
+  cwd: string;
+  title?: string;
+  updatedAt?: string;
+  isLocked?: boolean;
+  additionalDirectories?: string[];
+}
+
+export interface DevinSessionListRequest {
+  type: 'devinSession.list';
+}
+
+/** 加载已有 devin 会话 (cwd 必须与创建时一致) */
+export interface SessionLoadMsg {
+  type: 'session.load';
+  devinSessionId: string;
+  cwd: string;
+  additionalDirectories?: string[];
 }
 
 export interface SessionCancelMsg {
@@ -159,7 +193,9 @@ export type ClientMessage =
   | StatusRequest
   | DeviceListRequest
   | DeviceRevokeMsg
-  | WorkdirListRequest;
+  | WorkdirListRequest
+  | DevinSessionListRequest
+  | SessionLoadMsg;
 
 // ---------- server → client ----------
 
@@ -191,6 +227,18 @@ export interface SessionCreated {
   type: 'session.created';
   session: SessionMeta;
   acp?: SessionNewResult;   // 附带 modes/configOptions 供渲染选择器
+}
+
+/** 加载已有 devin 会话成功广播 (结构与 session.created 一致) */
+export interface SessionLoaded {
+  type: 'session.loaded';
+  session: SessionMeta;
+  acp?: SessionNewResult;
+}
+
+export interface DevinSessionListMsg {
+  type: 'devinSession.list';
+  sessions: DevinSessionInfo[];
 }
 
 export interface SessionSnapshot {
@@ -286,6 +334,8 @@ export type ServerMessage =
   | AuthOk
   | SessionListMsg
   | SessionCreated
+  | SessionLoaded
+  | DevinSessionListMsg
   | SessionSnapshot
   | SessionEventMsg
   | SessionStatusMsg

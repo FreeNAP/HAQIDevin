@@ -9,6 +9,8 @@ import type {
   SessionEvent,
   SessionEventKind,
   PendingPermission,
+  PromptAttachment,
+  DevinSessionInfo,
 } from '@devin-remote/protocol';
 import type {
   SessionNewResult,
@@ -109,7 +111,7 @@ export class SessionRuntime {
 
   // ---------- prompt 队列 ----------
 
-  prompt(text: string, clientMsgId: string, deviceName: string): void {
+  prompt(text: string, clientMsgId: string, deviceName: string, attachments?: PromptAttachment[]): void {
     if (this.recentClientMsgIds.has(clientMsgId)) return; // 幂等去重
     this.recentClientMsgIds.add(clientMsgId);
     if (this.recentClientMsgIds.size > 200) {
@@ -117,16 +119,41 @@ export class SessionRuntime {
       if (first) this.recentClientMsgIds.delete(first);
     }
 
-    // 用户消息多端回显
-    this.emit('user-message', { text, clientMsgId, deviceName, ts: Date.now() });
+    // 用户消息多端回显 (附件只回显元信息, 不回显 base64)
+    this.emit('user-message', {
+      text, clientMsgId, deviceName, ts: Date.now(),
+      attachments: attachments?.map((a) => ({ type: a.type, mimeType: a.mimeType, fileName: a.fileName })),
+    });
 
-    this.promptChain = this.promptChain.then(() => this.runPrompt(text)).catch((err) => {
+    this.promptChain = this.promptChain.then(() => this.runPrompt(text, attachments)).catch((err) => {
       this.emit('prompt-result', { stopReason: 'error', error: String(err?.message ?? err) });
       this.setStatus('idle');
     });
   }
 
-  private async runPrompt(text: string): Promise<void> {
+  /** 组装 ACP content blocks: 文本 + 图片(image) + 嵌入资源(resource) */
+  private buildContentBlocks(text: string, attachments?: PromptAttachment[]): unknown[] {
+    const blocks: unknown[] = [];
+    if (text) blocks.push({ type: 'text', text });
+    for (const a of attachments ?? []) {
+      if (a.type === 'image' && a.data) {
+        blocks.push({ type: 'image', data: a.data, mimeType: a.mimeType });
+      } else if (a.type === 'resource_text' && a.text) {
+        blocks.push({
+          type: 'resource',
+          resource: {
+            uri: a.uri ?? `file:///attachment/${a.fileName ?? 'file.txt'}`,
+            mimeType: a.mimeType,
+            text: a.text,
+          },
+        });
+      }
+    }
+    if (blocks.length === 0) blocks.push({ type: 'text', text: '' });
+    return blocks;
+  }
+
+  private async runPrompt(text: string, attachments?: PromptAttachment[]): Promise<void> {
     const conn = this.mgr.agent.connection;
     if (!conn || conn.isClosed()) throw new Error('agent 进程不可用');
     this.runningPrompt = true;
@@ -134,7 +161,7 @@ export class SessionRuntime {
     try {
       const result = await conn.request<{ stopReason?: string; usage?: unknown }>(
         'session/prompt',
-        { sessionId: this.sessionId, prompt: [{ type: 'text', text }] },
+        { sessionId: this.sessionId, prompt: this.buildContentBlocks(text, attachments) },
         30 * 60 * 1000, // 长 turn 上限 30min
       );
       this.emit('prompt-result', { stopReason: result?.stopReason ?? 'end_turn', usage: result?.usage });
@@ -231,10 +258,10 @@ export class SessionRuntime {
 
   // ---------- fs 监狱 ----------
 
-  /** 路径必须落在会话 cwd 子树内 (realpath 防符号链接逃逸) */
+  /** 路径必须落在会话 cwd 或附加工作目录子树内 (realpath 防符号链接逃逸) */
   private jail(pathInput: string): string {
     if (!isAbsolute(pathInput)) throw new Error('必须是绝对路径');
-    const baseReal = realpathSync(this.cwd);
+    const roots = [this.cwd, ...(this.meta.additionalDirectories ?? [])];
     const target = resolve(pathInput);
     let targetReal: string;
     try {
@@ -243,10 +270,20 @@ export class SessionRuntime {
       // 文件不存在 (写入新文件场景): 校验其父链最近存在祖先
       targetReal = target;
     }
-    const baseNorm = baseReal.endsWith(sep) ? baseReal : baseReal + sep;
-    const same = targetReal.toLowerCase().startsWith(baseNorm.toLowerCase()) || targetReal.toLowerCase() === baseReal.toLowerCase();
-    if (!same) throw new Error(`路径越出工作目录: ${pathInput}`);
-    return target;
+    const targetLower = targetReal.toLowerCase();
+    for (const root of roots) {
+      let baseReal: string;
+      try {
+        baseReal = realpathSync(root);
+      } catch {
+        continue; // 根目录不存在则跳过
+      }
+      const baseNorm = baseReal.endsWith(sep) ? baseReal : baseReal + sep;
+      if (targetLower.startsWith(baseNorm.toLowerCase()) || targetLower === baseReal.toLowerCase()) {
+        return target;
+      }
+    }
+    throw new Error(`路径越出工作目录: ${pathInput}`);
   }
 
   handleFsRead(msg: JsonRpcRequest): void {
@@ -361,6 +398,70 @@ export class SessionManager extends EventEmitter {
     this.sessions.set(result.sessionId, rt);
     this.store.upsertSession(rt.meta, result);
     rt.emit('session-status', { status: 'idle', created: true });
+    return rt;
+  }
+
+  /** devin 侧全部会话 (含 Devin Desktop 创建的), 按 updatedAt 降序 */
+  async listDevinSessions(): Promise<DevinSessionInfo[]> {
+    await this.agent.ensureReady();
+    const conn = this.agent.connection!;
+    const result = await conn.request<{ sessions?: unknown[] }>('session/list', {}, 20000);
+    const raw = result?.sessions ?? [];
+    const out: DevinSessionInfo[] = raw.map((s) => {
+      const r = s as Record<string, unknown>;
+      const meta = (r._meta ?? {}) as Record<string, unknown>;
+      return {
+        sessionId: String(r.sessionId ?? ''),
+        cwd: String(r.cwd ?? ''),
+        title: typeof r.title === 'string' ? r.title : undefined,
+        updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : undefined,
+        isLocked: meta['cognition.ai/isLocked'] === true,
+        additionalDirectories: Array.isArray(r.additionalDirectories)
+          ? (r.additionalDirectories as unknown[]).map(String)
+          : undefined,
+      };
+    }).filter((s) => s.sessionId);
+    out.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
+    return out;
+  }
+
+  /**
+   * 加载已有 devin 会话 (含 Devin Desktop 会话) — 幂等:
+   *  runtime 已存在则直接复用; 否则 session/load 并注册 runtime。
+   *  cwd 必须与该会话创建时一致, 否则 acp 返回 session_not_found。
+   *  加载时 agent 重放的历史 session/update 会自然流入事件流并持久化。
+   */
+  async loadDevinSession(devinSessionId: string, cwd: string, additionalDirectories?: string[]): Promise<SessionRuntime> {
+    const existing = this.sessions.get(devinSessionId);
+    if (existing && existing.acpCache) return existing; // 已加载且 acp 侧就绪
+
+    await this.agent.ensureReady();
+    const conn = this.agent.connection!;
+    const params: Record<string, unknown> = { sessionId: devinSessionId, cwd, mcpServers: [] };
+    if (additionalDirectories?.length) params.additionalDirectories = additionalDirectories;
+    const result = await conn.request<SessionNewResult>('session/load', params, 60000);
+
+    if (existing) {
+      // 有持久化记录但 acp 未加载: 就地激活, 保留既有事件序列
+      existing.acpCache = result;
+      existing.meta.status = 'idle';
+      existing.meta.modeId = result.modes?.currentModeId ?? existing.meta.modeId;
+      const modelOpt = result.configOptions?.find((o) => o.category === 'model');
+      if (modelOpt?.currentValue) existing.meta.modelId = modelOpt.currentValue;
+      if (additionalDirectories?.length) existing.meta.additionalDirectories = additionalDirectories;
+      this.store.upsertSession(existing.meta, result);
+      return existing;
+    }
+
+    const rt = new SessionRuntime(devinSessionId, cwd, this);
+    rt.acpCache = result;
+    rt.meta.modeId = result.modes?.currentModeId;
+    const modelOpt = result.configOptions?.find((o) => o.category === 'model');
+    if (modelOpt?.currentValue) rt.meta.modelId = modelOpt.currentValue;
+    if (additionalDirectories?.length) rt.meta.additionalDirectories = additionalDirectories;
+    this.sessions.set(devinSessionId, rt);
+    this.store.upsertSession(rt.meta, result);
+    rt.emit('session-status', { status: 'idle', loaded: true });
     return rt;
   }
 

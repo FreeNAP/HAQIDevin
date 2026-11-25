@@ -33,21 +33,36 @@ export class ServerManager {
     this.onStateChange = cb;
   }
 
-  /** 把 vscode 设置同步为 server 配置文件 */
+  /** 把 vscode 设置同步为 server 配置文件 — 合并而非覆盖: settings 有显式值才覆盖, 否则保留文件现状 */
   syncConfig(): void {
     const cfg = vscode.workspace.getConfiguration('devin-remote');
     const dir = join(homedir(), '.devin-remote');
     mkdirSync(dir, { recursive: true });
-    const port = cfg.get<number>('port') ?? 8787;
-    const workdirs = (cfg.get<string[]>('workdirs') ?? []).filter(Boolean).map((p) => ({ path: p }));
-    const merged = {
-      port,
-      host: '127.0.0.1',
-      lanEnabled: cfg.get<boolean>('lanEnabled') ?? true,
-      publicHostname: cfg.get<string>('publicHostname') || undefined,
-      workdirs,
+    const configFile = join(dir, 'config.json');
+
+    let existing: Record<string, unknown> = {};
+    try {
+      existing = JSON.parse(readFileSync(configFile, 'utf8'));
+    } catch { /* 无现存配置或损坏, 从空白开始 */ }
+
+    // 仅当 settings 中显式配置(非空)时才覆盖对应字段
+    const port = cfg.get<number>('port');
+    const lan = cfg.get<boolean>('lanEnabled');
+    const hostName = cfg.get<string>('publicHostname');
+    const settingDirs = (cfg.get<string[]>('workdirs') ?? []).filter(Boolean);
+
+    const merged: Record<string, unknown> = {
+      port: port ?? existing.port ?? 8787,
+      host: existing.host ?? '0.0.0.0',
+      lanEnabled: lan ?? existing.lanEnabled ?? true,
+      workdirs: settingDirs.length > 0
+        ? settingDirs.map((p) => ({ path: p }))
+        : (existing.workdirs ?? []),
     };
-    writeFileSync(join(dir, 'config.json'), JSON.stringify(merged, null, 2));
+    if (hostName) merged.publicHostname = hostName;
+    else if (existing.publicHostname) merged.publicHostname = existing.publicHostname;
+
+    writeFileSync(configFile, JSON.stringify(merged, null, 2));
   }
 
   async start(): Promise<void> {

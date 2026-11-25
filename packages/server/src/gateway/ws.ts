@@ -210,7 +210,28 @@ export class Gateway {
       case 'session.prompt': {
         const rt = this.mgr.get(msg.sessionId);
         if (!rt) return this.send(ws, { type: 'error', code: 'no_session', message: '会话不存在' });
-        rt.prompt(msg.text, msg.clientMsgId, state.deviceName ?? 'unknown');
+        rt.prompt(msg.text, msg.clientMsgId, state.deviceName ?? 'unknown', msg.attachments);
+        break;
+      }
+
+      case 'devinSession.list': {
+        try {
+          const sessions = await this.mgr.listDevinSessions();
+          this.send(ws, { type: 'devinSession.list', sessions });
+        } catch (e) {
+          this.send(ws, { type: 'error', code: 'list_failed', message: String((e as Error).message) });
+        }
+        break;
+      }
+
+      case 'session.load': {
+        try {
+          const rt = await this.mgr.loadDevinSession(msg.devinSessionId, msg.cwd, msg.additionalDirectories);
+          const loaded = { type: 'session.loaded' as const, session: rt.meta, acp: rt.acpCache ?? undefined };
+          this.broadcast(loaded);
+        } catch (e) {
+          this.send(ws, { type: 'error', code: 'load_failed', message: String((e as Error).message) });
+        }
         break;
       }
 
