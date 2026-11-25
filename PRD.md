@@ -463,3 +463,43 @@ HAQIDevin/
 2. **UI 风格**：见 mockups/ 五套样稿，选定后全项目统一。
 3. 工作目录清单：是否默认只允许 IDE 当前打开的 workspace，还是用户自由配置任意目录？（安全与便利的权衡，PRD 默认后者但需确认）
 4. 是否需要局域网直连模式（不走 Cloudflare，同 WiFi 直连）并进 v1？（成本低，价值高，倾向做）
+
+---
+
+## 十四、v2 需求批次 (2026-11-25 用户验收后增补)
+
+> 来源：用户实机验收后提出的功能总单。施工顺序按依赖排列——本地构建环境是所有 mobile 迭代的前提。
+
+### 批 0 — 本地 APK 构建环境 (一切迭代的前提)
+- JDK 17 便携版解压至 `C:\Users\30744\dev-tools\jdk-17` (下载已进行中: dev-tools/jdk17.zip)
+- Android SDK cmdline-tools + platform-34 + build-tools (dev-tools/sdk-tools.zip 下载中)
+- `tools\build-apk-local.bat` 一键: 设 JAVA_HOME/ANDROID_HOME → gradlew assembleRelease → adb install
+- 目标: 增量构建 3-8 分钟装机, 告别 CI 30 分钟
+
+### 批 A — 会话能力增强
+1. **历史时间线定位**: 会话内完整历史 (session.history 翻页 UI 接入, server 接口已上线), 类似 IDE 的历史列表, 点击条目定位跳转到对应消息位置
+2. **回撤 (revert)**: 会话可回退到历史某个检查点 — acp initialize 显示 revert=false, 需探针 devin acp 是否支持 session/revert 或 checkpoint 机制; 不支持则 UI 层做"复制该点之前上下文重开会话"
+3. **引用文件功能**: 输入栏 @ 触发文件选择, 引用文件内容/路径注入 prompt
+
+### 批 B — 侧边栏资源管理器 (对话页右上角)
+1. 对话页右上角开侧边栏 = 文件资源管理器 (cwd 树形浏览)
+2. 每个文件后有引用按钮 → 点击应用到对话输入栏
+3. 长按文件: 复制/剪切/粘贴/删除/复制路径 (server fs 监狱已有 read/write, 需补 delete/move/copy API)
+4. server 端: fs API 扩展 (readdir 已有? 查 packages/server/src/fs)
+
+### 批 C — 配置中心手机端
+1. **workdirs 手机端设置**: 查看/添加/删除工作目录 (server API 读写 config.json + 热生效, 注意 VSIX syncConfig 合并已修复不会丢)
+2. **rules 查看编辑**: devin rules 的读取/修改 (CLI `devin rules` 体系, 存储位置待探针)
+3. **MCP 配置查看修改**: mcp servers 配置读写
+4. **工作区设置**: 同步 IDE 工作区相关配置
+
+### 批 D — 账户/设备/git
+1. **额度显示**: 付费额度剩余/周限/日限/额外额度/到期时间 — 数据源探针: IDE 是如何获取的 (cascade RPC? app.devin.ai API?), CLI 有无查询接口
+2. **git 功能**: 手机端 git status/diff/commit/push — 关键痛点: Windows git 凭据弹窗每次手动点; 方案: 预置 credential.helper store 或 PAT 入仓配置, 后台自动认证
+3. **token 自动获取**: devin auth token 自动化 (已有 pywinpty+playwright 全自动化链路, 产品化为 server 后台定时校验/自动续期)
+4. **已撤销设备记录删除**: server API + mobile 设备管理 UI 删除按钮
+
+### 已完成 (本会话)
+- [x] 模型清单解锁 319 个 + 默认 swe-2-1-max 端到端生效
+- [x] 旧会话模型缓存刷新链路 (subscribe→后台 load→session.loaded→merge)
+- [x] VSIX syncConfig 丢字段修复
