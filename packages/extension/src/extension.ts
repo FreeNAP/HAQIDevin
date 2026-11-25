@@ -138,13 +138,28 @@ async function genPairingCode(): Promise<void> {
   }
   const cfg = vscode.workspace.getConfiguration('devin-remote');
   const hostname = cfg.get<string>('publicHostname') || '';
-  const deepLinkHost = hostname ? `https://${hostname}` : lanAddress(port);
-  // QR 内容: 服务地址 + 配对码, 手机端扫码即得两者
-  const qrPayload = JSON.stringify({ url: deepLinkHost, code: r.code });
+
+  // 智能主机选择: 公网隧道实时可达 → 公网域名; 否则 → LAN IP (手机扫了即用, 无需手输)
+  let host = '';
+  if (hostname) {
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 4000);
+      const probe = await fetch(`https://${hostname}/api/health`, { signal: ctl.signal });
+      clearTimeout(t);
+      if (probe.ok) host = hostname;
+    } catch { /* 公网不可达, 回落 LAN */ }
+  }
+  if (!host) {
+    host = lanAddress(port).replace(/^https?:\/\//, ''); // 去 scheme, mobile 端按形态自动选 ws/wss
+  }
+
+  // QR 内容: devinremote://pair?host=…&code=… (与手机端 pairQr 解析契约对齐)
+  const qrPayload = `devinremote://pair?host=${encodeURIComponent(host)}&code=${encodeURIComponent(String(r.code))}`;
   let qrSvg = '';
   try {
     const qrcode = await import('qrcode');
-    qrSvg = await qrcode.toString(qrPayload, { type: 'svg', margin: 1, width: 140 });
+    qrSvg = await qrcode.toString(qrPayload, { type: 'svg', margin: 1, width: 140, errorCorrectionLevel: 'M' });
   } catch { qrSvg = ''; }
   lastPairing = { code: r.code as string, expiresAt: r.expiresAt as number, qrSvg };
   panel.show();
