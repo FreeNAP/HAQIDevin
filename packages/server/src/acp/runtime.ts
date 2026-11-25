@@ -38,6 +38,8 @@ interface PendingEntry {
 export class SessionRuntime {
   public meta: SessionMeta;
   public acpCache: SessionNewResult | null = null;
+  /** acp 侧是否真实加载着该会话 (agent 重启后失效) — 幂等判断以此为准, 而非 acpCache 缓存 */
+  public acpLoaded = false;
   private seq = 0;
   private promptChain: Promise<unknown> = Promise.resolve();
   private pendingPerms = new Map<string, PendingEntry>();
@@ -322,6 +324,7 @@ export class SessionRuntime {
 
   /** agent 进程死亡时: 拒绝所有挂起权限, 标记错误 */
   onAgentDied(): void {
+    this.acpLoaded = false;
     for (const [, entry] of this.pendingPerms) {
       entry.responded = true;
       this.mgr.broadcastPermissionResolved(this.sessionId, entry.requestId, undefined, true, 'server');
@@ -392,6 +395,7 @@ export class SessionManager extends EventEmitter {
     const result = await conn.request<SessionNewResult>('session/new', { cwd, mcpServers: [] }, 60000);
     const rt = new SessionRuntime(result.sessionId, cwd, this);
     rt.acpCache = result;
+    rt.acpLoaded = true;
     rt.meta.modeId = result.modes?.currentModeId;
     const modelOpt = result.configOptions?.find((o) => o.category === 'model');
     if (modelOpt?.currentValue) rt.meta.modelId = modelOpt.currentValue;
@@ -433,35 +437,35 @@ export class SessionManager extends EventEmitter {
    */
   async loadDevinSession(devinSessionId: string, cwd: string, additionalDirectories?: string[]): Promise<SessionRuntime> {
     const existing = this.sessions.get(devinSessionId);
-    if (existing && existing.acpCache) return existing; // 已加载且 acp 侧就绪
+    if (existing && existing.acpLoaded) return existing; // acp 侧真实加载中才复用 (acpCache 只是元数据缓存)
 
     await this.agent.ensureReady();
     const conn = this.agent.connection!;
+
+    // 关键时序: 必须先注册 runtime 再发 session/load — 历史重放通知在 load 响应之前到达,
+    // 若无 runtime 在位会被路由层当孤儿丢弃 (实测: 重放 91 条只捕到 6 条)
+    let rt: SessionRuntime;
+    if (existing) {
+      rt = existing;
+    } else {
+      rt = new SessionRuntime(devinSessionId, cwd, this);
+      if (additionalDirectories?.length) rt.meta.additionalDirectories = additionalDirectories;
+      this.sessions.set(devinSessionId, rt);
+    }
+
     const params: Record<string, unknown> = { sessionId: devinSessionId, cwd, mcpServers: [] };
     if (additionalDirectories?.length) params.additionalDirectories = additionalDirectories;
     const result = await conn.request<SessionNewResult>('session/load', params, 60000);
 
-    if (existing) {
-      // 有持久化记录但 acp 未加载: 就地激活, 保留既有事件序列
-      existing.acpCache = result;
-      existing.meta.status = 'idle';
-      existing.meta.modeId = result.modes?.currentModeId ?? existing.meta.modeId;
-      const modelOpt = result.configOptions?.find((o) => o.category === 'model');
-      if (modelOpt?.currentValue) existing.meta.modelId = modelOpt.currentValue;
-      if (additionalDirectories?.length) existing.meta.additionalDirectories = additionalDirectories;
-      this.store.upsertSession(existing.meta, result);
-      return existing;
-    }
-
-    const rt = new SessionRuntime(devinSessionId, cwd, this);
     rt.acpCache = result;
-    rt.meta.modeId = result.modes?.currentModeId;
+    rt.acpLoaded = true;
+    rt.meta.status = 'idle';
+    rt.meta.modeId = result.modes?.currentModeId ?? rt.meta.modeId;
     const modelOpt = result.configOptions?.find((o) => o.category === 'model');
     if (modelOpt?.currentValue) rt.meta.modelId = modelOpt.currentValue;
     if (additionalDirectories?.length) rt.meta.additionalDirectories = additionalDirectories;
-    this.sessions.set(devinSessionId, rt);
     this.store.upsertSession(rt.meta, result);
-    rt.emit('session-status', { status: 'idle', loaded: true });
+    if (!existing) rt.emit('session-status', { status: 'idle', loaded: true });
     return rt;
   }
 

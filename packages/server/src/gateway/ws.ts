@@ -21,6 +21,20 @@ interface ClientState {
  * WebSocket 网关 — 配对/鉴权握手 + 订阅分发 + 协议路由
  * 握手时序: pair → pair.ok | auth.hello → auth.challenge → auth.response → auth.ok
  */
+
+/** 快照事件瘦身: tool_call 的 rawInput/rawOutput 可能含整文件内容, 超 16KB 截断 */
+function sanitizeEventForSnapshot(ev: import('@devin-remote/protocol').SessionEvent): typeof ev {
+  if (ev.kind !== 'acp-update' || !ev.payload) return ev;
+  const p = ev.payload as Record<string, unknown>;
+  const MAX = 16 * 1024;
+  const cut = (v: unknown): unknown =>
+    typeof v === 'string' && v.length > MAX ? v.slice(0, MAX) + ' …[truncated]' : v;
+  if (p.rawInput || p.rawOutput) {
+    return { ...ev, payload: { ...p, rawInput: cut(p.rawInput), rawOutput: cut(p.rawOutput) } };
+  }
+  return ev;
+}
+
 export class Gateway {
   private wss: WebSocketServer;
   private clients = new Set<ClientState>();
@@ -174,12 +188,18 @@ export class Gateway {
         const rt = this.mgr.get(msg.sessionId);
         if (!rt) return this.send(ws, { type: 'error', code: 'no_session', message: '会话不存在' });
         state.subscriptions.add(msg.sessionId);
-        const events = this.store.eventsSince(msg.sessionId, msg.sinceSeq ?? 0);
+        const all = this.store.eventsSince(msg.sessionId, msg.sinceSeq ?? 0);
+        // 大会话全量快照可超百 MB 撑爆 WS — 限量最近 400 条并截断超大 payload 字段
+        const SNAP_LIMIT = 400;
+        const truncated = all.length > SNAP_LIMIT;
+        const events = (truncated ? all.slice(-SNAP_LIMIT) : all).map(sanitizeEventForSnapshot);
         this.send(ws, {
           type: 'session.snapshot',
           sessionId: msg.sessionId,
           session: rt.meta,
           events,
+          truncated,
+          totalEvents: all.length,
           acp: rt.acpCache,
           pendingPermissions: rt.listPendingPermissions(),
         });
