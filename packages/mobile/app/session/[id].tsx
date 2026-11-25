@@ -7,7 +7,7 @@
  *  - 进入订阅 session.subscribe (sinceSeq 补拉), 离开 unsubscribe
  */
 import React from 'react';
-import { View, FlatList, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, FlatList, Pressable, StyleSheet, KeyboardAvoidingView, Platform, Keyboard, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { colors } from '../../src/theme/colors';
@@ -16,7 +16,6 @@ import { useChatStore } from '../../src/store/chat';
 import { useSessionsStore } from '../../src/store/sessions';
 import { useConnectionStore } from '../../src/store/connection';
 import { client } from '../../src/ws/client';
-import { Markdown } from '../../src/components/Markdown';
 import {
   UserBubble,
   AgentBubble,
@@ -30,6 +29,7 @@ import { Composer } from '../../src/components/Composer';
 import { ConfigPickerModal } from '../../src/components/ConfigPickerModal';
 import { initChatState, ChatItem } from '../../src/reducers/chatReducer';
 import type { ConfigOption } from '../../src/protocol/acp';
+import { PendingAttachment, toWireAttachments, hasImageAttachment } from '../../src/util/attachments';
 
 function renderItem(item: ChatItem, streamingAgentId: string | null) {
   switch (item.kind) {
@@ -71,6 +71,18 @@ function formatUsage(used?: number, size?: number): string | null {
   return `${fmt(used)}/${fmt(size)}`;
 }
 
+/**
+ * 当前模型是否支持图片 — 契约: configOptions 里 cognition.ai/supportsImages 为 false 时不支持
+ * 检查当前选中 option value 的 _meta 与配置项本身的 _meta, 缺省视为支持 (不阻塞发送)
+ */
+function currentModelSupportsImages(modelOption: ConfigOption | null): boolean {
+  if (!modelOption) return true;
+  const cur = modelOption.options?.find((o) => o.value === modelOption.currentValue);
+  const valueFlag = cur?._meta?.['cognition.ai/supportsImages'];
+  const optionFlag = modelOption._meta?.['cognition.ai/supportsImages'];
+  return valueFlag !== false && optionFlag !== false;
+}
+
 export default function ChatPage() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{ id: string }>();
@@ -84,6 +96,8 @@ export default function ChatPage() {
   const [resolvedFlash, setResolvedFlash] = React.useState<{ requestId: string; byDevice: string; key: number } | null>(null);
   const prevPendingIds = React.useRef<string[]>([]);
 
+  const listRef = React.useRef<FlatList<ChatItem>>(null);
+
   // 订阅生命周期
   React.useEffect(() => {
     if (!sessionId) return;
@@ -93,6 +107,15 @@ export default function ChatPage() {
       client.unsubscribe(sessionId);
     };
   }, [sessionId]);
+
+  // 键盘弹起时消息列表自动滚到底 (inverted 列表 offset 0 即底部)
+  React.useEffect(() => {
+    const event = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const sub = Keyboard.addListener(event, () => {
+      requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: 0, animated: true }));
+    });
+    return () => sub.remove();
+  }, []);
 
   const state = chat ?? initChatState(sessionId);
 
@@ -154,7 +177,31 @@ export default function ChatPage() {
         ? modelOption
         : null;
 
+  /**
+   * 发送 — 组装契约 v2 attachments 随 session.prompt 发出
+   * 返回 false 让 Composer 保留现场 (模型不支持图片时拦截)
+   */
+  const onSend = React.useCallback((text: string, attachments: PendingAttachment[]): boolean => {
+    if (hasImageAttachment(attachments) && !currentModelSupportsImages(modelOption)) {
+      Alert.alert(
+        '当前模型不支持图片',
+        '请切换到 SWE-1.6 Slow 或移除图片后再发送',
+        [{ text: '知道了', style: 'cancel' }],
+      );
+      return false;
+    }
+    // 纯附件无文字时合成占位文本, 保证 agent 有文本上下文且回声气泡内容一致
+    const finalText = text || (attachments.length > 0 ? `[附件] ${attachments.map((a) => a.fileName).join(', ')}` : '');
+    if (!finalText) return false;
+    const wire = toWireAttachments(attachments);
+    const id = client.sendPrompt(sessionId, finalText, wire.length > 0 ? wire : undefined);
+    return id !== null;
+  }, [sessionId, modelOption]);
+
   return (
+    // Android 端 keyboardVerticalOffset/behavior 保持 undefined:
+    // app.json softwareKeyboardLayoutMode=pan 让系统平移窗口, Expo Go 的 adjustResize 直接压缩布局,
+    // 两种模式下 composer 均不被遮挡; JS 侧再做 height 补偿会造成双重上移
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.paper }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -205,6 +252,7 @@ export default function ChatPage() {
 
         {/* 消息流 */}
         <FlatList
+          ref={listRef}
           style={{ flex: 1 }}
           contentContainerStyle={styles.flowContent}
           data={reversed}
@@ -247,7 +295,7 @@ export default function ChatPage() {
           commands={state.availableCommands}
           running={running}
           disabled={phase !== 'authed'}
-          onSend={(text) => client.sendPrompt(sessionId, text)}
+          onSend={onSend}
           onCancel={() => client.cancel(sessionId)}
         />
         <View style={{ height: Math.max(insets.bottom - 6, 0), backgroundColor: colors.paper }} />

@@ -96,13 +96,27 @@ function updateStatusBar(): void {
   }
 }
 
+/** 选物理网卡的 LAN 地址 — 排除 VirtualBox/VMware/Hyper-V 等虚拟网卡, 避免手机拿到不可达 IP */
 function lanAddress(port: number): string {
-  for (const ifaces of Object.values(networkInterfaces())) {
+  const virtualPattern = /virtualbox|vmware|hyper-v|vethernet|wsl|docker|loopback|tap|tun/i;
+  const candidates: { address: string; score: number }[] = [];
+  for (const [name, ifaces] of Object.entries(networkInterfaces())) {
+    const isVirtual = virtualPattern.test(name);
     for (const i of ifaces ?? []) {
-      if (i.family === 'IPv4' && !i.internal) return `http://${i.address}:${port}`;
+      if (i.family !== 'IPv4' || i.internal) continue;
+      let score = 0;
+      if (isVirtual) score -= 100;
+      // 物理网卡常见私网段加分; 169.254 链路本地减分
+      if (/^192\.168\./.test(i.address)) score += 10;
+      else if (/^10\./.test(i.address)) score += 8;
+      else if (/^172\.(1[6-9]|2\d|3[01])\./.test(i.address)) score += 6;
+      if (/^169\.254\./.test(i.address)) score -= 50;
+      candidates.push({ address: i.address, score });
     }
   }
-  return `http://127.0.0.1:${port}`;
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  return best ? `http://${best.address}:${port}` : `http://127.0.0.1:${port}`;
 }
 
 async function fetchJson(url: string, init?: RequestInit): Promise<Record<string, unknown> | null> {

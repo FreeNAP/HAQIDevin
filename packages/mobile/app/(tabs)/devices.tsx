@@ -47,6 +47,7 @@ export default function DevicesPage() {
   const serverStatus = useConnectionStore((s) => s.serverStatus);
   const devices = useConnectionStore((s) => s.devices);
   const selfDeviceId = useConnectionStore((s) => s.selfDeviceId);
+  const selfDeviceName = useConnectionStore((s) => s.selfDeviceName);
   const serverVersion = useConnectionStore((s) => s.serverVersion);
   const [refreshing, setRefreshing] = React.useState(false);
 
@@ -99,7 +100,16 @@ export default function DevicesPage() {
   return (
     <View style={[styles.page, { paddingTop: insets.top }]}>
       <View style={styles.appBar}>
-        <T size={16} weight="bold" ls={-0.4}>设备</T>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <T size={16} weight="bold" ls={-0.4}>设备</T>
+          {selfDeviceName && (
+            <View style={styles.selfChip}>
+              <M size={8.5} weight="bold" color={colors.acc} uppercase ls={0.5} numberOfLines={1}>
+                本机 · {selfDeviceName}
+              </M>
+            </View>
+          )}
+        </View>
         <View style={styles.hostChip}>
           <View style={[styles.chipDot, { backgroundColor: authed ? colors.ok : colors.ink3 }]} />
           <M size={9} color={colors.ink2}>
@@ -208,6 +218,14 @@ const styles = StyleSheet.create({
     borderColor: colors.ink,
     paddingHorizontal: 7,
     paddingVertical: 3,
+  },
+  selfChip: {
+    borderWidth: 1.5,
+    borderColor: colors.acc,
+    backgroundColor: colors.accSoft,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    maxWidth: 180,
   },
   chipDot: { width: 6, height: 6 },
   hostCard: { paddingHorizontal: 12, paddingVertical: 11 },

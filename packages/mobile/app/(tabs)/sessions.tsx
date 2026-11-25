@@ -1,23 +1,32 @@
 /**
- * 会话列表页 — 对照 mockup 界面 1 + PRD M2/M3
- *  - 顶部 app-bar: 标题 + host chip (连接状态点 + 域名)
- *  - 过滤 chip: 全部/运行中/待审批(角标)/已完成
- *  - 会话行: 标题/目录·时间/状态 badge, 待审批朱红左侧条+浅红底, 运行中黑左侧条
- *  - 下拉刷新重拉 session.list, 右上角 + 新建会话
+ * 会话列表页 — 对照 mockup 界面 1 + PRD M2/M3 + 契约 v2
+ *  - 数据源: devinSession.list (devin 侧全部会话) ∪ session.list (server 已加载会话)
+ *  - 已加载会话显示在线状态点 + 实时状态 badge; isLocked 显示「桌面占用中」
+ *  - 点击未加载会话 → session.load (locked 先确认冲突提示) → 成功跳对话页
+ *  - 下拉刷新重拉两个列表, 右上角 + 新建会话
  */
 import React from 'react';
-import { View, Pressable, FlatList, RefreshControl, StyleSheet } from 'react-native';
+import { View, Pressable, FlatList, RefreshControl, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import { colors } from '../../src/theme/colors';
-import { T, M, Badge, PulseDot } from '../../src/components/ui';
+import { T, M, Badge } from '../../src/components/ui';
 import { useConnectionStore } from '../../src/store/connection';
-import { useSessionsStore, sortedSessions, filterSessions, waitingCount, SessionFilter } from '../../src/store/sessions';
-import type { SessionMeta } from '../../src/protocol/wire';
+import {
+  useSessionsStore,
+  mergeSessionRows,
+  filterMergedRows,
+  waitingCount,
+  SessionFilter,
+  MergedSessionRow,
+} from '../../src/store/sessions';
+import type { DevinSessionInfo } from '../../src/protocol/wire';
 import { relativeTime, dirName } from '../../src/util/time';
 import { client } from '../../src/ws/client';
 
-function statusBadge(s: SessionMeta): { text: string; tone: 'warn' | 'live' | 'done' | 'dim' | 'danger'; live?: boolean } {
+function loadedBadge(row: MergedSessionRow): { text: string; tone: 'warn' | 'live' | 'done' | 'dim' | 'danger'; live?: boolean } | null {
+  const s = row.loaded;
+  if (!s) return null;
   if (s.status === 'waiting_permission' || s.hasPendingPermission) return { text: '待审批', tone: 'warn' };
   if (s.status === 'running') return { text: '运行中', tone: 'live', live: true };
   if (s.status === 'error') return { text: '错误', tone: 'danger' };
@@ -25,34 +34,57 @@ function statusBadge(s: SessionMeta): { text: string; tone: 'warn' | 'live' | 'd
   return { text: '已完成', tone: 'done' };
 }
 
-function SessionRow({ meta }: { meta: SessionMeta }) {
-  const b = statusBadge(meta);
-  const warn = b.tone === 'warn';
-  const live = b.tone === 'live';
-  const dim = meta.status === 'closed';
+function SessionRow({
+  row,
+  loading,
+  disabled,
+  onPress,
+}: {
+  row: MergedSessionRow;
+  loading: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const b = loadedBadge(row);
+  const warn = b?.tone === 'warn';
+  const live = b?.tone === 'live';
+  const dim = row.loaded?.status === 'closed';
+  const online = row.loaded !== undefined && row.loaded.status !== 'closed';
   return (
     <Pressable
-      onPress={() => router.push(`/session/${encodeURIComponent(meta.sessionId)}`)}
+      onPress={onPress}
+      disabled={disabled}
       style={({ pressed }) => [
         styles.row,
         warn && styles.rowWarn,
         pressed && { backgroundColor: colors.paper2 },
-        dim && { opacity: 0.55 },
+        (dim || (disabled && !loading)) && { opacity: 0.55 },
       ]}
     >
       {(warn || live) && <View style={[styles.rowBar, { backgroundColor: warn ? colors.acc : colors.ink }]} />}
       <View style={styles.rowMain}>
-        <T size={13.5} weight="semibold" ls={-0.1} numberOfLines={1}>
-          {meta.title || '未命名会话'}
-        </T>
+        <View style={styles.titleRow}>
+          {online && <View style={styles.onlineDot} />}
+          <T size={13.5} weight="semibold" ls={-0.1} numberOfLines={1} style={{ flex: 1 }}>
+            {row.title || '未命名会话'}
+          </T>
+        </View>
         <M size={9.5} color={colors.ink3} uppercase ls={0.5} style={{ marginTop: 4 }} numberOfLines={1}>
-          {dirName(meta.cwd)} · {relativeTime(meta.lastActiveAt)}
+          {dirName(row.cwd)} · {row.sortTs > 0 ? relativeTime(row.sortTs) : '—'}
         </M>
         <M size={9} color={colors.ink3} style={{ marginTop: 3 }} numberOfLines={1}>
-          {meta.cwd}
+          {row.cwd}
         </M>
       </View>
-      <Badge text={b.text} tone={b.tone} pulse={b.live} />
+      {loading ? (
+        <ActivityIndicator size="small" color={colors.acc} />
+      ) : row.loaded ? (
+        b && <Badge text={b.text} tone={b.tone} pulse={b.live} />
+      ) : row.isLocked ? (
+        <Badge text="桌面端占用中" tone="warn" />
+      ) : (
+        <Badge text="未加载" tone="dim" />
+      )}
     </Pressable>
   );
 }
@@ -70,24 +102,91 @@ export default function SessionsPage() {
   const activeHost = useConnectionStore((s) => s.activeHost);
   const latency = useConnectionStore((s) => s.latencyMs);
   const sessions = useSessionsStore((s) => s.sessions);
+  const devinSessions = useSessionsStore((s) => s.devinSessions);
+  const devinListLoaded = useSessionsStore((s) => s.devinListLoaded);
   const filter = useSessionsStore((s) => s.filter);
   const setFilter = useSessionsStore((s) => s.setFilter);
   const [refreshing, setRefreshing] = React.useState(false);
+  const [loadingId, setLoadingId] = React.useState<string | null>(null);
 
-  const all = sortedSessions(sessions);
-  const list = filterSessions(all, filter);
+  const rows = React.useMemo(() => mergeSessionRows(devinSessions, sessions), [devinSessions, sessions]);
+  const list = React.useMemo(() => filterMergedRows(rows, filter), [rows, filter]);
   const pending = waitingCount(sessions);
 
   const onRefresh = React.useCallback(() => {
     setRefreshing(true);
     client.requestSessions();
+    client.requestDevinSessions();
     setTimeout(() => setRefreshing(false), 800);
   }, []);
 
-  // 进入页面时若已认证, 主动刷新一次
+  // 进入页面时若已认证, 主动刷新一次 (bootstrap 已拉过, 这里兜底刷新)
   React.useEffect(() => {
-    if (phase === 'authed') client.requestSessions();
+    if (phase === 'authed') {
+      client.requestSessions();
+      client.requestDevinSessions();
+    }
   }, [phase]);
+
+  // 页面重新聚焦 (从对话页/新建页返回, 或切回 tab) 也刷新 — 桌面端新建的会话才能同步出现
+  useFocusEffect(
+    React.useCallback(() => {
+      if (useConnectionStore.getState().phase === 'authed') {
+        client.requestSessions();
+        client.requestDevinSessions();
+      }
+    }, []),
+  );
+
+  /** 加载会话并跳转 — contract: 透传 devinSessionId/cwd/additionalDirectories */
+  const openSession = React.useCallback(async (row: MergedSessionRow) => {
+    if (row.loaded) {
+      router.push(`/session/${encodeURIComponent(row.sessionId)}`);
+      return;
+    }
+    if (loadingId) return; // 一次只加载一个, 避免并发错配
+    setLoadingId(row.sessionId);
+    try {
+      // 优先透传 devinSession.list 原始条目 (cwd/additionalDirectories 必须与创建时一致)
+      const info: DevinSessionInfo = row.devinInfo ?? {
+        sessionId: row.sessionId,
+        cwd: row.cwd,
+        title: row.title,
+        updatedAt: new Date(row.sortTs).toISOString(),
+        isLocked: row.isLocked,
+        additionalDirectories: row.additionalDirectories,
+      };
+      const meta = await client.loadSession(info);
+      router.push(`/session/${encodeURIComponent(meta.sessionId)}`);
+    } catch (e) {
+      Alert.alert('加载失败', e instanceof Error ? e.message : '加载会话失败, 请重试');
+    } finally {
+      setLoadingId(null);
+    }
+  }, [loadingId]);
+
+  const onRowPress = React.useCallback((row: MergedSessionRow) => {
+    if (row.loaded) {
+      void openSession(row);
+      return;
+    }
+    if (phase !== 'authed') {
+      Alert.alert('未连接', '连接主机后才能加载会话');
+      return;
+    }
+    if (row.isLocked) {
+      Alert.alert(
+        '会话被占用',
+        '该会话正在 Devin Desktop 中打开，接管可能导致冲突，仍要继续吗？',
+        [
+          { text: '取消', style: 'cancel' },
+          { text: '继续接管', style: 'destructive', onPress: () => void openSession(row) },
+        ],
+      );
+      return;
+    }
+    void openSession(row);
+  }, [openSession, phase]);
 
   return (
     <View style={[styles.page, { paddingTop: insets.top }]}>
@@ -139,7 +238,14 @@ export default function SessionsPage() {
       <FlatList
         data={list}
         keyExtractor={(item) => item.sessionId}
-        renderItem={({ item }) => <SessionRow meta={item} />}
+        renderItem={({ item }) => (
+          <SessionRow
+            row={item}
+            loading={loadingId === item.sessionId}
+            disabled={loadingId !== null && !item.loaded}
+            onPress={() => onRowPress(item)}
+          />
+        )}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.acc} colors={[colors.acc]} />
         }
@@ -147,7 +253,13 @@ export default function SessionsPage() {
           <View style={styles.empty}>
             <M size={20} color={colors.hairline}>◈</M>
             <T size={12} color={colors.ink3} style={{ marginTop: 10, textAlign: 'center' }}>
-              {phase === 'authed' ? '暂无会话 — 点右上角 ＋ 新建' : '连接主机后查看会话'}
+              {phase !== 'authed'
+                ? '连接主机后查看会话'
+                : !devinListLoaded
+                  ? '正在加载会话列表…'
+                  : filter === 'all'
+                    ? 'Devin 上还没有会话 — 点右上角 ＋ 新建'
+                    : '该过滤条件下暂无会话'}
             </T>
           </View>
         }
@@ -232,5 +344,7 @@ const styles = StyleSheet.create({
   rowWarn: { backgroundColor: colors.accSoft },
   rowBar: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 3 },
   rowMain: { flex: 1, minWidth: 0 },
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  onlineDot: { width: 6, height: 6, backgroundColor: colors.ok },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 80 },
 });

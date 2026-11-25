@@ -343,7 +343,22 @@ function asAvailableCommands(v: unknown): AvailableCommand[] | null {
 function mergeConfigOptions(prev: ConfigOption[], next: ConfigOption[]): ConfigOption[] {
   const map = new Map<string, ConfigOption>();
   for (const o of prev) map.set(o.id, o);
-  for (const o of next) map.set(o.id, o);
+  for (const o of next) {
+    const existing = map.get(o.id);
+    if (existing) {
+      // 增量更新可能只带 currentValue — 缺省字段沿用已有值, 避免丢 options 列表
+      map.set(o.id, {
+        ...existing,
+        ...o,
+        options: Array.isArray(o.options) && o.options.length > 0 ? o.options : existing.options,
+        name: o.name ?? existing.name,
+        description: o.description ?? existing.description,
+        category: o.category ?? existing.category,
+      });
+    } else {
+      map.set(o.id, o);
+    }
+  }
   return Array.from(map.values());
 }
 

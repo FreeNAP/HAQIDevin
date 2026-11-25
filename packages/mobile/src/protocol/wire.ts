@@ -72,6 +72,19 @@ export interface SessionListRequest {
   type: 'session.list';
 }
 
+/** 契约 v2: 列出 devin 侧全部会话 (含未加载到 server 的) */
+export interface DevinSessionListRequest {
+  type: 'devinSession.list';
+}
+
+/** 契约 v2: 加载已有 devin 会话 — cwd 必须与创建时一致 (devinSession.list 原样透传) */
+export interface SessionLoad {
+  type: 'session.load';
+  devinSessionId: string;
+  cwd: string;
+  additionalDirectories?: string[];
+}
+
 export interface SessionSubscribe {
   type: 'session.subscribe';
   sessionId: string;
@@ -88,11 +101,24 @@ export interface SessionCreate {
   cwd: string;
 }
 
+// ---------- 契约 v2 扩展: prompt 附件 (docs/PROTOCOL-CONTRACT.md, 形状与 packages/protocol 对齐) ----------
+
+/** prompt 附件: 图片走 ACP image block, 文本资源走 embedded context */
+export interface PromptAttachment {
+  type: 'image' | 'resource_text';
+  mimeType: string;
+  fileName?: string;
+  data?: string;            // image: base64
+  text?: string;            // resource_text: 文件内容
+  uri?: string;             // resource_text: file:// uri
+}
+
 export interface SessionPromptMsg {
   type: 'session.prompt';
   sessionId: string;
   text: string;
   clientMsgId: string;      // 客户端生成, 幂等去重
+  attachments?: PromptAttachment[];   // 契约 v2: 无附件时省略 (向后兼容)
 }
 
 export interface SessionCancelMsg {
@@ -148,6 +174,8 @@ export type ClientMessage =
   | AuthHello
   | AuthResponse
   | SessionListRequest
+  | DevinSessionListRequest
+  | SessionLoad
   | SessionSubscribe
   | SessionUnsubscribe
   | SessionCreate
@@ -188,10 +216,32 @@ export interface SessionListMsg {
   sessions: SessionMeta[];
 }
 
+/** 契约 v2: devin 侧全部会话条目 (devinSession.list 响应) — 字段可选性与 packages/protocol 对齐, 客户端宽容处理缺省 */
+export interface DevinSessionInfo {
+  sessionId: string;
+  cwd: string;
+  title?: string | null;
+  updatedAt?: string;             // ISO 8601 时间串
+  isLocked?: boolean;             // true = 正被 Devin Desktop 占用, 加载可能冲突
+  additionalDirectories?: string[];
+}
+
+export interface DevinSessionListMsg {
+  type: 'devinSession.list';
+  sessions: DevinSessionInfo[];   // 按 updatedAt 降序
+}
+
 export interface SessionCreated {
   type: 'session.created';
   session: SessionMeta;
   acp?: SessionNewResult;   // 附带 modes/configOptions 供渲染选择器
+}
+
+/** 契约 v2: session.load 成功广播 — 结构同 session.created */
+export interface SessionLoaded {
+  type: 'session.loaded';
+  session: SessionMeta;
+  acp?: SessionNewResult;
 }
 
 export interface SessionSnapshot {
@@ -286,7 +336,9 @@ export type ServerMessage =
   | AuthChallenge
   | AuthOk
   | SessionListMsg
+  | DevinSessionListMsg
   | SessionCreated
+  | SessionLoaded
   | SessionSnapshot
   | SessionEventMsg
   | SessionStatusMsg

@@ -15,6 +15,9 @@ import type {
   ServerMessage,
   SessionMeta,
   PendingPermission,
+  PromptAttachment,
+  DevinSessionInfo,
+  SessionLoad,
 } from '../protocol/wire';
 import { useConnectionStore } from '../store/connection';
 import { useSessionsStore } from '../store/sessions';
@@ -36,6 +39,7 @@ const DEAD_AFTER_MS = 45_000;
 const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 const CREATE_TIMEOUT_MS = 30_000;
+const LOAD_TIMEOUT_MS = 45_000;   // 加载已有会话需重放历史, 比新建更慢
 
 type Timer = ReturnType<typeof setTimeout>;
 
@@ -43,6 +47,15 @@ interface PendingCreate {
   cwd: string;
   resolve: (s: SessionMeta) => void;
   reject: (e: Error) => void;
+  timer: Timer;
+}
+
+interface PendingLoad {
+  devinSessionId: string;
+  waiters: {
+    resolve: (s: SessionMeta) => void;
+    reject: (e: Error) => void;
+  }[];
   timer: Timer;
 }
 
@@ -75,6 +88,7 @@ class DevinClient {
   /** sessionId → 订阅时请求的 sinceSeq (判定快照全量/增量用) */
   private subscriptions = new Map<string, number>();
   private pendingCreates: PendingCreate[] = [];
+  private pendingLoads: PendingLoad[] = [];
 
   // ---------- 公共 API ----------
 
@@ -167,14 +181,18 @@ class DevinClient {
     }
   }
 
-  /** 发送 prompt — 已认证时立即乐观回显, 返回 clientMsgId; 未连接返回 null 且不发送 */
-  sendPrompt(sessionId: string, text: string): string | null {
+  /** 发送 prompt — 已认证时立即乐观回显, 返回 clientMsgId; 未连接返回 null 且不发送
+   *  attachments 为契约 v2 附件数组 (图片 base64 / 文本 embedded context), 无附件时省略 */
+  sendPrompt(sessionId: string, text: string, attachments?: PromptAttachment[]): string | null {
     if (!this.authed || !this.isOpen()) {
       return null; // 界面层已在离线时禁用输入, 双重防护避免静默丢消息
     }
     const clientMsgId = genClientMsgId();
     useChatStore.getState().optimisticUser(sessionId, text, clientMsgId);
-    this.send({ type: 'session.prompt', sessionId, text, clientMsgId });
+    const msg: ClientMessage = attachments && attachments.length > 0
+      ? { type: 'session.prompt', sessionId, text, clientMsgId, attachments }
+      : { type: 'session.prompt', sessionId, text, clientMsgId };
+    this.send(msg);
     return clientMsgId;
   }
 
@@ -214,8 +232,51 @@ class DevinClient {
     });
   }
 
+  /**
+   * 契约 v2: 加载已有 devin 会话 — cwd/additionalDirectories 从 devinSession.list 原样透传
+   * server 幂等: 已加载的同 id 会话直接复用; 成功广播 session.loaded, 失败 error load_failed
+   * 同 id 并发重复调用挂到同一在途请求上 (session.loaded 到达时全部兑现)
+   */
+  loadSession(info: DevinSessionInfo): Promise<SessionMeta> {
+    return new Promise<SessionMeta>((resolve, reject) => {
+      if (!this.authed || !this.isOpen()) {
+        reject(new Error('尚未连接到主机'));
+        return;
+      }
+      const existing = this.pendingLoads.find((p) => p.devinSessionId === info.sessionId);
+      if (existing) {
+        // 不重复发 session.load — 复用在途请求
+        existing.waiters.push({ resolve, reject });
+        return;
+      }
+      const timer = setTimeout(() => {
+        const pending = this.pendingLoads.find((p) => p.devinSessionId === info.sessionId);
+        this.pendingLoads = this.pendingLoads.filter((p) => p.devinSessionId !== info.sessionId);
+        if (pending) {
+          for (const w of pending.waiters) w.reject(new Error('加载会话超时 — 会话历史可能较大, 请重试'));
+        }
+      }, LOAD_TIMEOUT_MS);
+      const waiters = [{ resolve, reject }];
+      this.pendingLoads.push({ devinSessionId: info.sessionId, waiters, timer });
+      const msg: SessionLoad = {
+        type: 'session.load',
+        devinSessionId: info.sessionId,
+        cwd: info.cwd,
+      };
+      if (info.additionalDirectories && info.additionalDirectories.length > 0) {
+        msg.additionalDirectories = info.additionalDirectories;
+      }
+      this.send(msg);
+    });
+  }
+
   requestSessions(): void {
     if (this.authed) this.send({ type: 'session.list' });
+  }
+
+  /** 契约 v2: 拉取 devin 侧全部会话 (含未加载的) */
+  requestDevinSessions(): void {
+    if (this.authed) this.send({ type: 'devinSession.list' });
   }
 
   requestStatus(): void {
@@ -359,6 +420,11 @@ class DevinClient {
       p.reject(new Error('连接已断开'));
     }
     this.pendingCreates = [];
+    for (const p of this.pendingLoads) {
+      clearTimeout(p.timer);
+      for (const w of p.waiters) w.reject(new Error('连接已断开'));
+    }
+    this.pendingLoads = [];
     this.authed = false;
     if (closeSocket && this.ws) {
       try {
@@ -476,6 +542,10 @@ class DevinClient {
         sessions.setAll(msg.sessions);
         return;
       }
+      case 'devinSession.list': {
+        sessions.setDevinSessions(msg.sessions);
+        return;
+      }
       case 'session.created': {
         sessions.upsert(msg.session);
         // 优先按 cwd 匹配 (并发创建两个不同目录会话时不错配), 无匹配回退 FIFO
@@ -485,6 +555,17 @@ class DevinClient {
           const [pending] = this.pendingCreates.splice(idx, 1);
           clearTimeout(pending.timer);
           pending.resolve(msg.session);
+        }
+        return;
+      }
+      case 'session.loaded': {
+        // 契约 v2: session.load 成功 — 结构同 session.created, 按 devinSessionId 兑现等待者
+        sessions.upsert(msg.session);
+        const idx = this.pendingLoads.findIndex((p) => p.devinSessionId === msg.session.sessionId);
+        if (idx >= 0) {
+          const [pending] = this.pendingLoads.splice(idx, 1);
+          clearTimeout(pending.timer);
+          for (const w of pending.waiters) w.resolve(msg.session);
         }
         return;
       }
@@ -557,6 +638,16 @@ class DevinClient {
     const conn = useConnectionStore.getState();
     const phase = conn.phase;
 
+    if (code === 'load_failed') {
+      // 契约 v2: session.load 失败 — 拒绝全部在途加载 (错误无会话上下文, 并发加载场景罕见)
+      const pendings = this.pendingLoads;
+      this.pendingLoads = [];
+      for (const p of pendings) {
+        clearTimeout(p.timer);
+        for (const w of p.waiters) w.reject(new Error(message || '加载会话失败'));
+      }
+      return;
+    }
     if (FATAL_AUTH_CODES.has(code)) {
       // 设备被撤销或凭据失效 — 清除凭据, 回到配对态
       if (this.host) void deleteCredentials(this.host.id);
@@ -578,9 +669,10 @@ class DevinClient {
     conn.setPhase(phase, message);
   }
 
-  /** auth.ok 后的引导: 拉会话/状态/设备 + 重订阅 (sinceSeq = 已收最大 seq) */
+  /** auth.ok 后的引导: 拉会话/状态/设备 + devin 全量会话 + 重订阅 (sinceSeq = 已收最大 seq) */
   private bootstrap(): void {
     this.send({ type: 'session.list' });
+    this.send({ type: 'devinSession.list' });
     this.send({ type: 'status.request' });
     this.send({ type: 'device.list' });
     const chat = useChatStore.getState();

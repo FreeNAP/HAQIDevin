@@ -14,6 +14,7 @@
     },
     "android": {
       "package": "com.haqiai.devin",
+      "softwareKeyboardLayoutMode": "pan",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#fafaf7"
@@ -22,7 +23,23 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "需要相机权限以扫描桌面端配对二维码",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "需要相册权限以选择图片附件发送给 Devin",
+          "cameraPermission": "需要相机权限以拍摄照片附件发送给 Devin",
+          "microphonePermission": false
+        }
+      ]
     ],
     "icon": "./assets/icon.png",
     "splash": {
