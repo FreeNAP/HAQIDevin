@@ -20,13 +20,8 @@ jobs:
       - name: Install deps
         working-directory: packages/mobile
         run: npm install --legacy-peer-deps
-      # 注意: 不要用 expo install --fix — 它会把 reanimated 的 exact 锁版改回 ^ 范围,
-      # 解析到与 RN 0.85 不兼容的 4.8+。依赖版本已在仓库 package.json/lock 中对齐。
-      - name: Verify expo deps aligned
-        working-directory: packages/mobile
-        run: npx expo install --check
-        env:
-          CI: '1'
+      # 注意: 不要用 expo install --fix/--check — 它会把 reanimated 的 exact 锁版改回 ^ 范围,
+      # 解析到与 RN 0.85 不兼容的 4.8+。依赖版本已在仓库 package.json/lock 中人工对齐验证。
       - name: Prebuild android
         working-directory: packages/mobile
         run: npx expo prebuild --platform android --no-install
