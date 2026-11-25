@@ -506,3 +506,27 @@ HAQIDevin/
 - [x] 模型清单解锁 319 个 + 默认 swe-2-1-max 端到端生效
 - [x] 旧会话模型缓存刷新链路 (subscribe→后台 load→session.loaded→merge)
 - [x] VSIX syncConfig 丢字段修复
+
+---
+
+## 十五、施工进度快照 (2026-11-25 深夜, 会话 emerald-straw 收尾时)
+
+### 环境状态
+- JDK 17: ✅ 就绪 `C:\Users\30744\dev-tools\jdk-17`
+- Android SDK: 🟡 `C:\Users\30744\dev-tools\android-sdk`
+  - cmdline-tools ✅ / build-tools 34.0.0 ✅ / platform-tools ✅(待验证完整性, zip 只有 15 entries 可能不全, 不全则用 sdkmanager 补)
+  - **platforms;android-34 缺失** — sdkmanager 代理模式后台下载中 (dev-tools/platform-status.log); 若失败, 腾讯镜像正确文件名待查 (mirrors.cloud.tencent.com/AndroidSDK/ 的 platform-34_r03.zip 下载为 0B 失败, 可能文件名不对; 备选: 用 sdkmanager 配 JAVA_TOOL_OPTIONS 代理参数)
+- 下载加速结论: 腾讯镜像直连 2-5MB/s 可用; dl.google.com 直连/代理都极慢; sdkmanager 走代理需 JAVA_TOOL_OPTIONS="-Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=10808"
+- adb 现成可用: `tools\platform-tools\adb.exe` (repo 内)
+- 首次构建命令就绪: `tools\build-apk-local.bat` (android 目录不存在会自动 prebuild)
+
+### 代码施工状态 (下次收割)
+- **子 agent A (server v2 API)**: fs.list/read/delete/move/copy、workdir.add/remove、rules/mcp 读写、git.status/diff/commit/push/pull、account.quota 额度探针 — 后台施工中, 成果在 packages/server+packages/protocol, **收割时必须 `cd packages/protocol && npx tsc -p tsconfig.json` 重新编译 dist 再验 server tsc**
+- **子 agent B (mobile 侧边栏)**: 会话页右侧滑出文件树/引用按钮/长按操作菜单 — 后台施工中, 成果在 packages/mobile/src, wire.ts 协议镜像与 server 对齐联调
+- 已完成并 push: device.delete API (server)、session.loaded 模型刷新链路 (server+mobile 已装 APK)、git 免弹窗、credential username 固定
+- CI: workflow 只在 packages/mobile/** 变化时触发 (paths 过滤)
+
+### 下次会话开工口令: "收割 v2 批次"
+1. 收割两个子 agent 的代码 → tsc 验证 → 联调对齐 wire 协议
+2. 补完 platform-34 → 首次本地构建验证 (15-25 分钟, 之后增量 3-8 分钟)
+3. 装机验证: 侧边栏/设备删除/模型刷新 → 继续批 A 剩余 (时间线定位/回撤) 与批 D (token 自动化/额度 UI)
