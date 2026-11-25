@@ -78,6 +78,14 @@ export interface SessionSubscribe {
   sinceSeq?: number;        // 断线重连: 从此 seq 之后补拉; 0/缺省 = 全量快照
 }
 
+/** 历史翻页请求 — 拉取 beforeSeq 之前的一批 */
+export interface SessionHistoryReq {
+  type: 'session.history';
+  sessionId: string;
+  beforeSeq: number;        // 拉此 seq 之前的事件
+  limit?: number;           // 默认 200, 上限 400
+}
+
 export interface SessionUnsubscribe {
   type: 'session.unsubscribe';
   sessionId: string;
@@ -182,6 +190,7 @@ export type ClientMessage =
   | AuthResponse
   | SessionListRequest
   | SessionSubscribe
+  | SessionHistoryReq
   | SessionUnsubscribe
   | SessionCreate
   | SessionPromptMsg
@@ -252,6 +261,17 @@ export interface SessionSnapshot {
   configOptions?: unknown;
   availableCommands?: unknown;
   pendingPermissions: PendingPermission[];
+}
+
+/** 历史翻页响应 — beforeSeq 之前的一批事件 (按 seq 升序) */
+export interface SessionHistoryBatchMsg {
+  type: 'session.history.batch';
+  sessionId: string;
+  events: SessionEvent[];
+  /** 是否还有更早的事件可翻页 */
+  hasMore: boolean;
+  /** 本批最小 seq — 下次翻页用它作 beforeSeq */
+  oldestSeq: number;
 }
 
 export interface SessionEventMsg {
@@ -339,6 +359,7 @@ export type ServerMessage =
   | SessionLoaded
   | DevinSessionListMsg
   | SessionSnapshot
+  | SessionHistoryBatchMsg
   | SessionEventMsg
   | SessionStatusMsg
   | PermissionRequestMsg

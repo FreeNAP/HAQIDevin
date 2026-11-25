@@ -188,10 +188,11 @@ export class Gateway {
         const rt = this.mgr.get(msg.sessionId);
         if (!rt) return this.send(ws, { type: 'error', code: 'no_session', message: '会话不存在' });
         state.subscriptions.add(msg.sessionId);
-        const all = this.store.eventsSince(msg.sessionId, msg.sinceSeq ?? 0);
-        // 大会话全量快照可超百 MB 撑爆 WS — 限量最近 400 条并截断超大 payload 字段
+        const sinceSeq = msg.sinceSeq ?? 0;
+        const all = this.store.eventsSince(msg.sessionId, sinceSeq);
+        // 全量快照(sinceSeq=0)限量最近 400 条防爆 WS; 增量补拉不截断 — 截断会造成中间 seq 永久丢失
         const SNAP_LIMIT = 400;
-        const truncated = all.length > SNAP_LIMIT;
+        const truncated = sinceSeq <= 0 && all.length > SNAP_LIMIT;
         const events = (truncated ? all.slice(-SNAP_LIMIT) : all).map(sanitizeEventForSnapshot);
         this.send(ws, {
           type: 'session.snapshot',
@@ -202,6 +203,22 @@ export class Gateway {
           totalEvents: all.length,
           acp: rt.acpCache,
           pendingPermissions: rt.listPendingPermissions(),
+        });
+        break;
+      }
+
+      case 'session.history': {
+        const rt = this.mgr.get(msg.sessionId);
+        if (!rt) return this.send(ws, { type: 'error', code: 'no_session', message: '会话不存在' });
+        const limit = Math.min(Math.max(msg.limit ?? 200, 1), 400);
+        const batch = this.store.eventsBefore(msg.sessionId, msg.beforeSeq, limit)
+          .map(sanitizeEventForSnapshot);
+        this.send(ws, {
+          type: 'session.history.batch',
+          sessionId: msg.sessionId,
+          events: batch,
+          hasMore: batch.length === limit && (batch[0]?.seq ?? 0) > 1,
+          oldestSeq: batch[0]?.seq ?? msg.beforeSeq,
         });
         break;
       }

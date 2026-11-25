@@ -28,6 +28,7 @@ export interface SessionMeta {
   modelId?: string;
   lastSeq: number;            // 当前最大事件序号
   hasPendingPermission: boolean;
+  additionalDirectories?: string[];  // devin 会话附加工作目录 (fs 监狱一并放行)
 }
 
 // ---------- 事件封装 ----------
@@ -248,7 +249,9 @@ export interface SessionSnapshot {
   type: 'session.snapshot';
   sessionId: string;
   session: SessionMeta;
-  events: SessionEvent[];   // 全量或 sinceSeq 之后的事件
+  events: SessionEvent[];   // 全量或 sinceSeq 之后的事件 (大会话仅最近 400 条)
+  truncated?: boolean;      // 快照被限量截断时为 true
+  totalEvents?: number;     // 事件总数 (截断时 > events.length)
   acp?: SessionNewResult | null;
   configOptions?: unknown;
   availableCommands?: unknown;

@@ -139,6 +139,17 @@ export class Store {
     }
   }
 
+  /** 翻页: 取 beforeSeq 之前的最近 limit 条 (升序返回) */
+  eventsBefore(sessionId: string, beforeSeq: number, limit: number): SessionEvent[] {
+    let arr = this.eventCache.get(sessionId);
+    if (!arr) {
+      arr = this.readEventsSync(sessionId);
+      this.eventCache.set(sessionId, arr);
+    }
+    const earlier = arr.filter((e) => e.seq < beforeSeq);
+    return earlier.slice(-limit);
+  }
+
   eventsSince(sessionId: string, sinceSeq = 0): SessionEvent[] {
     let arr = this.eventCache.get(sessionId);
     if (!arr) {

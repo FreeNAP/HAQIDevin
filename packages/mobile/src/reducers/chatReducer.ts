@@ -5,7 +5,7 @@
  *  - 每会话事件 seq 严格递增 → 去重规则: seq <= maxSeq 的事件丢弃
  *  - applySnapshot(reset=true) 全量重放; (reset=false) 断线补拉增量合并, 复用同一套事件逻辑
  *  - 工具卡片按 toolCallId 合并 tool_call / tool_call_update
- *  - plan 单卡滚动更新; agent/thought chunk 向尾部同类 item 追加文本
+ *  - plan 单卡滚动更新; user/agent/thought chunk 向尾部同类 item 追加文本
  *  - 本模块为纯函数, 不依赖 react/react-native, 可在 node 下单测
  */
 import type {
@@ -116,6 +116,10 @@ export interface ChatState {
   modes: ModesInfo | null;
   currentModeId: string | null;
   usage: UsageInfo | null;
+  /** 全量快照被 server 限量截断: 本地历史不完整 */
+  truncated: boolean;
+  /** server 侧事件总数 (truncated 时用于提示) */
+  totalEvents: number | null;
   pendingPermissions: PendingPermission[];
   /** permission.resolved 通告: requestId → byDevice, 用于 "已由 XX 处理" 展示 */
   resolvedBy: Record<string, { byDevice: string; optionId?: string; cancelled?: boolean }>;
@@ -134,6 +138,8 @@ export function initChatState(sessionId: string): ChatState {
     modes: null,
     currentModeId: null,
     usage: null,
+    truncated: false,
+    totalEvents: null,
     pendingPermissions: [],
     resolvedBy: {},
   };
@@ -150,6 +156,13 @@ function extractText(content: unknown): string {
   if (!c) return '';
   if (typeof c.text === 'string') return c.text;
   return '';
+}
+
+/** prompt-result 的 error 字段宽容取文本: server 当前传 string, 兼容 Error 形对象 */
+function errorText(v: unknown): string {
+  if (typeof v === 'string') return v;
+  const r = asRecord(v);
+  return r && typeof r.message === 'string' ? r.message : '';
 }
 
 interface AcpUpdatePayload {
@@ -208,7 +221,7 @@ function nextId(prefix: string): string {
 }
 
 /** 向尾部追加流式文本: 尾部为同类 item 则拼接, 否则新开 */
-function appendChunk(items: ChatItem[], kind: 'agent' | 'thought', text: string, seq: number, ts: number): ChatItem[] {
+function appendChunk(items: ChatItem[], kind: 'agent' | 'thought' | 'user', text: string, seq: number, ts: number): ChatItem[] {
   if (!text) return items;
   const last = items.length > 0 ? items[items.length - 1] : undefined;
   if (last && last.kind === kind) {
@@ -404,7 +417,8 @@ export function applyEvent(state: ChatState, event: SessionEvent): ChatState {
           items = appendChunk(items, 'thought', extractText(u.content), seq, ts);
           break;
         case 'user_message_chunk':
-          // 用户消息已由 'user-message' 信封事件回显, 忽略避免重复
+          // 加载的 devin 历史走 ACP user chunk; live prompt 的 echo 已由 server 过滤, 不会与信封事件双显
+          items = appendChunk(items, 'user', extractText(u.content), seq, ts);
           break;
         case 'tool_call':
         case 'tool_call_update':
@@ -461,6 +475,9 @@ export function applyEvent(state: ChatState, event: SessionEvent): ChatState {
         items = appendNotice(items, '输出达到 token 上限', 'warn', seq, ts);
       } else if (stopReason === 'refusal') {
         items = appendNotice(items, '模型拒绝了该请求', 'error', seq, ts);
+      } else if (stopReason === 'error') {
+        const detail = errorText(p?.error);
+        items = appendNotice(items, detail ? `执行出错 — ${detail}` : '执行出错', 'error', seq, ts);
       }
       const usage = asRecord(p?.usage);
       if (usage) {
@@ -498,6 +515,8 @@ export function applyEvent(state: ChatState, event: SessionEvent): ChatState {
 export interface SnapshotInput {
   session: SessionMeta;
   events: SessionEvent[];
+  truncated?: boolean;
+  totalEvents?: number;
   acp?: SessionNewResult | null;
   configOptions?: unknown;
   availableCommands?: unknown;
@@ -516,11 +535,21 @@ export function applySnapshot(state: ChatState, snap: SnapshotInput, reset: bool
     ? state.items.filter((it): it is UserItem => it.kind === 'user' && Boolean(it.pending))
     : [];
 
+  // 增量快照不截断; 一旦历史缺头, 截断标记保留到下一次全量快照重新判定
+  const snapTruncated = snap.truncated === true;
+  const truncated = reset ? snapTruncated : base.truncated || snapTruncated;
+  let totalEvents: number | null = null;
+  if (truncated) {
+    totalEvents = snapTruncated && typeof snap.totalEvents === 'number' ? snap.totalEvents : base.totalEvents;
+  }
+
   base = {
     ...base,
     meta: snap.session,
     status: snap.session.status,
     title: snap.session.title ?? base.title,
+    truncated,
+    totalEvents,
     pendingPermissions: Array.isArray(snap.pendingPermissions) ? snap.pendingPermissions : [],
   };
 

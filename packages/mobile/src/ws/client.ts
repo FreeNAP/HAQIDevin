@@ -59,6 +59,13 @@ interface PendingLoad {
   timer: Timer;
 }
 
+interface SubscriptionState {
+  /** 最近一次 subscribe 请求的 sinceSeq — 迟到快照 reset 判定用 */
+  sinceSeq: number;
+  /** false = 已取消订阅; 记录仍保留, 避免迟到快照误判全量 reset */
+  active: boolean;
+}
+
 /** 设备被撤销/鉴权失败类错误码 — 收到即清除本地凭据回到配对态
  *  以服务器实际实现为准 (packages/server/src/gateway/ws.ts):
  *  设备不存在/被撤销/超 30 天未活跃/签名失败 → 统一 'auth_rejected' */
@@ -85,8 +92,8 @@ class DevinClient {
   private opening = false;
   /** 连接代际计数 — connect() 异步段的竞态防护: 代际过期即放弃 */
   private connectGen = 0;
-  /** sessionId → 订阅时请求的 sinceSeq (判定快照全量/增量用) */
-  private subscriptions = new Map<string, number>();
+  /** sessionId → 订阅状态 (sinceSeq 判定快照全量/增量; active 控制重连后是否重订阅) */
+  private subscriptions = new Map<string, SubscriptionState>();
   private pendingCreates: PendingCreate[] = [];
   private pendingLoads: PendingLoad[] = [];
 
@@ -165,7 +172,7 @@ class DevinClient {
     const chat = useChatStore.getState();
     chat.ensure(sessionId);
     const sinceSeq = chat.bySession[sessionId]?.maxSeq ?? 0;
-    this.subscriptions.set(sessionId, sinceSeq);
+    this.subscriptions.set(sessionId, { sinceSeq, active: true });
     if (this.authed) {
       const msg: ClientMessage = sinceSeq > 0
         ? { type: 'session.subscribe', sessionId, sinceSeq }
@@ -175,7 +182,10 @@ class DevinClient {
   }
 
   unsubscribe(sessionId: string): void {
-    this.subscriptions.delete(sessionId);
+    const sub = this.subscriptions.get(sessionId);
+    if (sub) {
+      this.subscriptions.set(sessionId, { ...sub, active: false });
+    }
     if (this.authed) {
       this.send({ type: 'session.unsubscribe', sessionId });
     }
@@ -570,13 +580,15 @@ class DevinClient {
         return;
       }
       case 'session.snapshot': {
-        const requestedSince = this.subscriptions.get(msg.sessionId) ?? 0;
+        const requestedSince = this.subscriptions.get(msg.sessionId)?.sinceSeq ?? 0;
         const reset = requestedSince <= 0;
         chat.applySnapshotMsg(
           msg.sessionId,
           {
             session: msg.session,
             events: msg.events,
+            truncated: msg.truncated,
+            totalEvents: msg.totalEvents,
             acp: msg.acp ?? null,
             configOptions: msg.configOptions,
             availableCommands: msg.availableCommands,
@@ -610,7 +622,10 @@ class DevinClient {
           optionId: msg.optionId,
           cancelled: msg.cancelled,
         });
-        sessions.setPendingPermission(msg.sessionId, false);
+        const remaining = useChatStore.getState().bySession[msg.sessionId]?.pendingPermissions.length ?? 0;
+        if (remaining === 0) {
+          sessions.setPendingPermission(msg.sessionId, false);
+        }
         return;
       }
       case 'server.status': {
@@ -676,9 +691,10 @@ class DevinClient {
     this.send({ type: 'status.request' });
     this.send({ type: 'device.list' });
     const chat = useChatStore.getState();
-    for (const sessionId of this.subscriptions.keys()) {
+    for (const [sessionId, sub] of this.subscriptions) {
+      if (!sub.active) continue;
       const sinceSeq = chat.bySession[sessionId]?.maxSeq ?? 0;
-      this.subscriptions.set(sessionId, sinceSeq);
+      this.subscriptions.set(sessionId, { sinceSeq, active: true });
       const msg: ClientMessage = sinceSeq > 0
         ? { type: 'session.subscribe', sessionId, sinceSeq }
         : { type: 'session.subscribe', sessionId };

@@ -45,6 +45,8 @@ export class SessionRuntime {
   private pendingPerms = new Map<string, PendingEntry>();
   private recentClientMsgIds = new Set<string>();
   private runningPrompt = false;
+  /** live prompt 的 agent echo 过滤窗口: server 已发 user-message 信封, echo chunk 须丢弃防双显 */
+  private echoPending: string | null = null;
 
   constructor(
     public readonly sessionId: string,
@@ -97,6 +99,18 @@ export class SessionRuntime {
   handleNotification(method: string, params: unknown): void {
     if (method === 'session/update') {
       const p = params as SessionUpdateParams;
+      // live echo 过滤: server 转发的 prompt 已被 agent 原样 echo 为 user_message_chunk,
+      // 与 server 自发的 user-message 信封重复 — 按文本前缀匹配丢弃; 重放/桌面端 echo 不在窗口内, 自然保留
+      const upd = p.update as { sessionUpdate?: string; content?: { type?: string; text?: string } };
+      if (upd.sessionUpdate === 'user_message_chunk' && this.echoPending !== null) {
+        const chunkText = upd.content?.text ?? '';
+        if (chunkText && this.echoPending.startsWith(chunkText)) {
+          this.echoPending = this.echoPending.slice(chunkText.length);
+          if (this.echoPending.length === 0) this.echoPending = null;
+          return; // echo 分片, 丢弃
+        }
+        this.echoPending = null; // 不匹配说明不是 echo (如桌面端插入), 关闭窗口放行
+      }
       this.emit('acp-update', p.update);
       const u = p.update as { sessionUpdate?: string; title?: string | null; currentModeId?: string };
       if (u.sessionUpdate === 'session_info_update' && u.title) {
@@ -156,8 +170,15 @@ export class SessionRuntime {
   }
 
   private async runPrompt(text: string, attachments?: PromptAttachment[]): Promise<void> {
+    // server 重启/agent 崩溃后 acp 侧会话丢失 — 先重载再 prompt, 否则会话静默变砖
+    if (!this.acpLoaded) {
+      this.emit('session-status', { status: 'reloading', note: 'acp 会话重载中' });
+      await this.mgr.loadDevinSession(this.sessionId, this.meta.cwd, this.meta.additionalDirectories);
+    }
     const conn = this.mgr.agent.connection;
     if (!conn || conn.isClosed()) throw new Error('agent 进程不可用');
+    this.echoPending = text || ''; // 空文本(纯附件)无 echo 窗口
+    if (!this.echoPending) this.echoPending = null;
     this.runningPrompt = true;
     this.setStatus('running');
     try {

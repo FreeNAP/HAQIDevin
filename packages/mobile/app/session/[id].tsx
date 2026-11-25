@@ -154,6 +154,9 @@ export default function ChatPage() {
 
   const title = state.title ?? meta?.title ?? '未命名会话';
   const usageText = formatUsage(state.usage?.used, state.usage?.size);
+  const truncatedText = state.truncated
+    ? `仅显示最近部分历史${typeof state.totalEvents === 'number' ? `（共 ${state.totalEvents} 条事件）` : ''}`
+    : null;
 
   const reversed = React.useMemo(() => [...state.items].reverse(), [state.items]);
   const firstPending = state.pendingPermissions[0] ?? null;
@@ -240,6 +243,15 @@ export default function ChatPage() {
           )}
           <View style={[styles.statusDot, { backgroundColor: running ? colors.acc : colors.ink3 }]} />
         </View>
+
+        {/* 历史截断提示 */}
+        {truncatedText && (
+          <View style={styles.truncatedBar}>
+            <T size={10.5} color={colors.ink2}>
+              {truncatedText}
+            </T>
+          </View>
+        )}
 
         {/* 断线提示 */}
         {phase !== 'authed' && (
@@ -349,6 +361,13 @@ const styles = StyleSheet.create({
   statusDot: { width: 7, height: 7, marginLeft: 6 },
   offlineBar: {
     backgroundColor: colors.accSoft,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.hairline,
+    paddingVertical: 7,
+    alignItems: 'center',
+  },
+  truncatedBar: {
+    backgroundColor: colors.paper2,
     borderBottomWidth: 1,
     borderBottomColor: colors.hairline,
     paddingVertical: 7,
