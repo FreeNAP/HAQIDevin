@@ -360,6 +360,15 @@ export class Gateway {
         break;
       }
 
+      case 'device.delete': {
+        if (!this.store.deleteDevice(msg.deviceId)) {
+          this.send(ws, { type: 'error', code: 'delete_rejected', message: '设备不存在或未撤销 — 仅已撤销设备可删除' });
+        } else {
+          this.send(ws, { type: 'device.deleted', deviceId: msg.deviceId });
+        }
+        break;
+      }
+
       case 'workdir.list': {
         const { existsSync } = await import('node:fs');
         this.send(ws, {

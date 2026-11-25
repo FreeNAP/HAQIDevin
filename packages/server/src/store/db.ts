@@ -187,6 +187,15 @@ export class Store {
     return true;
   }
 
+  /** 物理删除设备记录 — 仅限已撤销设备 (防误删在线设备) */
+  deleteDevice(deviceId: string): boolean {
+    const d = this.state.devices[deviceId];
+    if (!d || !d.revokedAt) return false;
+    delete this.state.devices[deviceId];
+    void this.persist();
+    return true;
+  }
+
   touchDevice(deviceId: string): void {
     const d = this.state.devices[deviceId];
     if (d) {

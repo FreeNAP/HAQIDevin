@@ -180,6 +180,11 @@ export interface DeviceRevokeMsg {
   deviceId: string;
 }
 
+export interface DeviceDeleteMsg {
+  type: 'device.delete';
+  deviceId: string;
+}
+
 export interface WorkdirListRequest {
   type: 'workdir.list';
 }
@@ -202,6 +207,7 @@ export type ClientMessage =
   | StatusRequest
   | DeviceListRequest
   | DeviceRevokeMsg
+  | DeviceDeleteMsg
   | WorkdirListRequest
   | DevinSessionListRequest
   | SessionLoadMsg;
@@ -338,6 +344,11 @@ export interface WorkdirListMsg {
   dirs: { path: string; label?: string; exists?: boolean }[];
 }
 
+export interface DeviceDeletedMsg {
+  type: 'device.deleted';
+  deviceId: string;
+}
+
 export interface ErrorMsg {
   type: 'error';
   code: string;
@@ -365,7 +376,7 @@ export type ServerMessage =
   | PermissionRequestMsg
   | PermissionResolvedMsg
   | ServerStatus
-  | DeviceListMsg
+  | DeviceListMsg | DeviceDeletedMsg
   | WorkdirListMsg
   | ErrorMsg
   | PongMsg;
