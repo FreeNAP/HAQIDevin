@@ -111,3 +111,23 @@ node scripts/e2e-test.mjs   # 真实 devin acp 全链路: 配对/鉴权/会话/�
 - `session/load` 恢复历史会话到 acp 侧尚未打通 (devin 返回 -32016); server 重启后旧会话标记 error, 新建会话即可
 - iOS 未适配 (Expo 项目理论上可编译, 未测试)
 - 隧道 token 目前存在 vscode 设置里 (明文), 后续迁移 SecretStorage
+
+## 受限网络下的公网隧道（重要）
+
+如果 `https://devin.haqiai.com` 返回 530 而隧道配置无误，根因通常是**代理节点对 Go TLS 指纹的审计重置**：
+
+- cloudflared 是 Go 程序，其 TLS ClientHello 指纹独特
+- 部分机场节点在出口审计 TLS 指纹，识别到 cloudflared 特征后重置连接（防滥用）
+- 实测同一链路上 openssl/python 指纹的 TLS 握手成功、cloudflared 零字节 EOF
+
+**自助排查（按顺序试）**：
+
+1. 在 v2rayN 中**切换节点**（换 2-3 个试），然后双击运行 `tools/start-tunnel.bat`，看到 200 即放行成功
+2. 手机热点共享给电脑后重试（移动网络对 7844 的封锁策略不同）
+3. 都不行就用 **LAN 直连**（同 WiFi 下手机输电脑 IP:8787，不依赖任何公网）
+
+**一键工具**：`tools/start-tunnel.bat` 会启动 edge-relay（socks5 中转）+ cloudflared 并自动验证公网状态码。工具链：
+
+- `tools/edge-relay.py` — 127.0.0.1:17844 经本地 socks5 代理转发到 CF edge
+- `tools/cloudflared-2024.exe` — 固定用 2024.6.1 版本（稳定性已验证）
+- 配置 `~/.cloudflared/config-devin.yml`（ingress: devin.haqiai.com 指向 localhost:8787）
