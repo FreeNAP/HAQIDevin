@@ -1,7 +1,10 @@
 node_modules/
 dist/
 out/
-tools/
+tools/apk/
+tools/probe/
+tools/*.log
+tools/.gh-token
 *.vsix
 *.log
 scripts/probe-log.json

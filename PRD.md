@@ -494,7 +494,10 @@ HAQIDevin/
 4. **工作区设置**: 同步 IDE 工作区相关配置
 
 ### 批 D — 账户/设备/git
-1. **额度显示**: 付费额度剩余/周限/日限/额外额度/到期时间 — 数据源探针: IDE 是如何获取的 (cascade RPC? app.devin.ai API?), CLI 有无查询接口
+1. **额度显示**: 付费额度剩余/周限/日限/额外额度/到期时间 — 已探明线索:
+   - acp usage_update 事件 _meta 有 totalCreditCost/totalAcuCost/inputTokens (server events 已持久化, 可直接用)
+   - CLI 二进制藏完整 quota 字段族: weekly_quota_remaining_percent / overage_balance_micros / daily_quota_reset_at_unix / weekly_quota_reset_at_unix / acu_consumed / acu_limit / quota_exhausted — 说明后端有额度查询响应结构
+   - 下一步: playwright (app.devin.ai 登录态仍在) 抓 web 前端的 usage API 网络请求, 或 connect-RPC 通道探测 GetUsage 类方法; IDE cascade 的 usage 弹窗数据源在 language server wasm
 2. **git 功能**: 手机端 git status/diff/commit/push — 关键痛点: Windows git 凭据弹窗每次手动点; 方案: 预置 credential.helper store 或 PAT 入仓配置, 后台自动认证
 3. **token 自动获取**: devin auth token 自动化 (已有 pywinpty+playwright 全自动化链路, 产品化为 server 后台定时校验/自动续期)
 4. **已撤销设备记录删除**: server API + mobile 设备管理 UI 删除按钮
