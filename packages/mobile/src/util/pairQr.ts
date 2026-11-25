@@ -53,6 +53,17 @@ export function parsePairQr(raw: string): PairQrResult | null {
   const input = raw.trim();
   if (!input) return null;
 
+  // 形式 0: 旧版 JSON 形 {"url":"…","code":"…"} (VSIX 早期版本)
+  if (input.startsWith('{')) {
+    try {
+      const obj = JSON.parse(input) as { url?: string; host?: string; code?: string };
+      const hostRaw = obj.host ?? obj.url;
+      const host = hostRaw ? decodeHost(hostRaw.replace(/^https?:\/\//, '').replace(/\/+$/, '')) : undefined;
+      const code = obj.code ? normalizePairCode(obj.code) : undefined;
+      if (host || code) return { host, code };
+    } catch { /* 非 JSON, 继续其他形式 */ }
+  }
+
   // 形式 2: <host>|<code> 纯文本
   if (!input.includes('://') && input.includes('|')) {
     const [hostPart, codePart] = input.split('|').map((s) => s.trim());
@@ -66,9 +77,16 @@ export function parsePairQr(raw: string): PairQrResult | null {
   const params = extractParams(input);
   if (params.host || params.code) return params;
 
-  // 兜底: 整体就是一个配对码
+  // 兜底 1: 整体就是一个配对码
   const codeOnly = normalizePairCode(input);
   if (codeOnly) return { code: codeOnly };
+
+  // 兜底 2: 扫码内容轻微变异 (截断/首尾噪字符) — 正则宽容提取 host 与 8 位码
+  const codeMatch = input.match(/(?:code=)?([A-Za-z0-9]{4}-[A-Za-z0-9]{4})\b/) ?? input.match(/\b([A-Za-z0-9]{8})\b/);
+  const hostMatch = input.match(/host=([^\s&]+)/) ?? input.match(/\b((?:\d{1,3}\.){3}\d{1,3}(?::\d+)?)\b/) ?? input.match(/\b([a-z0-9][a-z0-9.-]+\.[a-z]{2,}(?::\d+)?)\b/i);
+  const looseCode = codeMatch ? normalizePairCode(codeMatch[1]) : undefined;
+  const looseHost = hostMatch ? decodeHost(hostMatch[1]) : undefined;
+  if (looseHost || looseCode) return { host: looseHost, code: looseCode };
 
   return null;
 }
