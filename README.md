@@ -76,6 +76,14 @@ npx @vscode/vsce package --no-dependencies   # 产出 devin-remote-0.1.0.vsix
 
 配对码在 VSIX 控制面板生成 (Devin Remote: 打开控制面板 → 生成配对码), 5 分钟有效、仅用一次。
 
+**手机端能力一览**:
+
+- **全量会话接入** — 列表展示 devin 侧所有会话 (含 Devin Desktop 里创建的), 点击即可接管继续对话, 完整历史自动重放; 桌面端占用中的会话有冲突提示
+- **模型/模式切换** — Code/Smart/Ask/Plan/Bypass 五模式 + SWE 模型选择, 与桌面端同源 (configOptions 实时同步)
+- **附件发送** — 拍照/相册图片/文本文件, 不支持图片的模型会提示先切换
+- **流式对话** — 思考流/tool_call 卡片/权限审批/用量统计全量渲染
+- **扫码配对** — 相机扫 QR 一键完成主机+配对码录入
+
 ## 安全说明
 
 - `~/.devin-remote/state.json` 含设备密钥, 权限已限制; **不要分享此文件**
@@ -108,7 +116,8 @@ node scripts/e2e-test.mjs   # 真实 devin acp 全链路: 配对/鉴权/会话/�
 
 ## 已知限制 (v1)
 
-- `session/load` 恢复历史会话到 acp 侧尚未打通 (devin 返回 -32016); server 重启后旧会话标记 error, 新建会话即可
+- `session/load` 要求 cwd 与该会话创建时一致 (devin 侧约束) — App 会自动透传无需关心; 桌面端占用中的会话接管可能产生双端冲突, UI 已加确认提示
+- server 重启后已加载会话的 acp 侧连接需要重新 load (点击会话即可, 历史持久化不丢)
 - iOS 未适配 (Expo 项目理论上可编译, 未测试)
 - 隧道 token 目前存在 vscode 设置里 (明文), 后续迁移 SecretStorage
 
