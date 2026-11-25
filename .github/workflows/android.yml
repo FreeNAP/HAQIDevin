@@ -20,6 +20,11 @@ jobs:
       - name: Install deps
         working-directory: packages/mobile
         run: npm install --legacy-peer-deps
+      - name: Align expo deps
+        working-directory: packages/mobile
+        run: npx expo install --fix
+        env:
+          CI: '1'
       - name: Prebuild android
         working-directory: packages/mobile
         run: npx expo prebuild --platform android --no-install
