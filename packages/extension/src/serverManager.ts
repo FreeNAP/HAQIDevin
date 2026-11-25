@@ -52,6 +52,7 @@ export class ServerManager {
     const settingDirs = (cfg.get<string[]>('workdirs') ?? []).filter(Boolean);
 
     const merged: Record<string, unknown> = {
+      ...existing,
       port: port ?? existing.port ?? 8787,
       host: existing.host ?? '0.0.0.0',
       lanEnabled: lan ?? existing.lanEnabled ?? true,
