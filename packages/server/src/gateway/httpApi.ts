@@ -43,7 +43,9 @@ export function createHttpServer(opts: HttpApiOptions): HttpServer {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const path = url.pathname;
     const remote = req.socket.remoteAddress ?? '';
-    const isLoopback = remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1';
+    // P0 安全: cloudflared 回源使公网请求 peer 都是 loopback — 带代理 header 的一律视为公网, 不放行管理 API
+    const viaProxy = !!(req.headers['cf-connecting-ip'] || req.headers['cf-ray'] || req.headers['x-forwarded-for']);
+    const isLoopback = !viaProxy && (remote === '127.0.0.1' || remote === '::1' || remote === '::ffff:127.0.0.1');
 
     // CORS: PWA 与 API 同源, 不需开放; 仅健康检查公开
     if (path === '/api/health') {
@@ -143,7 +145,13 @@ function deny(res: ServerResponse, code: number, message: string): void {
 }
 
 function serveStatic(root: string, urlPath: string, res: ServerResponse): void {
-  let rel = decodeURIComponent(urlPath);
+  let rel: string;
+  try {
+    rel = decodeURIComponent(urlPath);
+  } catch {
+    res.writeHead(400).end('bad url');
+    return;
+  }
   if (rel === '/' || rel === '') rel = '/index.html';
   const filePath = normalize(join(root, rel));
   if (!filePath.startsWith(normalize(root))) {
