@@ -44,12 +44,28 @@ function sanitizeEventForSnapshot(ev: import('@devin-remote/protocol').SessionEv
   if (ev.kind !== 'acp-update' || !ev.payload) return ev;
   const p = ev.payload as Record<string, unknown>;
   const MAX = 16 * 1024;
+  const DIFF_MAX = 8 * 1024; // diff 单字段上限 — 大型 edit 的 old/new 可达 1.5MB, 原样传输会打爆移动端
   const cut = (v: unknown): unknown =>
     typeof v === 'string' && v.length > MAX ? v.slice(0, MAX) + ' …[truncated]' : v;
+  const cutDiff = (v: unknown): unknown =>
+    typeof v === 'string' && v.length > DIFF_MAX ? v.slice(0, DIFF_MAX) + '\n…[truncated]' : v;
+  let payload: Record<string, unknown> = p;
   if (p.rawInput || p.rawOutput) {
-    return { ...ev, payload: { ...p, rawInput: cut(p.rawInput), rawOutput: cut(p.rawOutput) } };
+    payload = { ...payload, rawInput: cut(p.rawInput), rawOutput: cut(p.rawOutput) };
   }
-  return ev;
+  if (Array.isArray(payload.content)) {
+    payload = {
+      ...payload,
+      content: (payload.content as unknown[]).map((c) => {
+        if (c && typeof c === 'object' && (c as Record<string, unknown>).type === 'diff') {
+          const d = c as Record<string, unknown>;
+          return { ...d, oldText: cutDiff(d.oldText), newText: cutDiff(d.newText) };
+        }
+        return c;
+      }),
+    };
+  }
+  return payload === p ? ev : { ...ev, payload };
 }
 
 function pathIdentity(p: string): string {

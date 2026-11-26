@@ -118,7 +118,7 @@ export function diffLines(oldText: string, newText: string): DiffLine[] {
   const suffix = contextLines(a.slice(endA));
   const midA = a.slice(start, endA);
   const midB = b.slice(start, endB);
-  const middle = midA.length + midB.length > 1400
+  const middle = midA.length + midB.length > 150
     ? [...midA.map((text) => ({ type: 'del' as const, text })), ...midB.map((text) => ({ type: 'add' as const, text }))]
     : myersMiddle(midA, midB);
   return [...prefix, ...middle, ...suffix];
