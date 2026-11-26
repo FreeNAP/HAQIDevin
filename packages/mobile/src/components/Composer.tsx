@@ -26,13 +26,38 @@ interface Props {
   onCancel: () => void;
 }
 
-export function Composer({ commands, running, disabled, onSend, onCancel }: Props) {
+/** 命令式句柄 — 资源管理器引用文件时向输入框插入文本并聚焦 */
+export interface ComposerHandle {
+  /** 在现有文本末尾追加 (自动补空格分隔), 插入后聚焦输入框 */
+  insertText: (t: string) => void;
+  focus: () => void;
+}
+
+export const Composer = React.forwardRef<ComposerHandle, Props>(function Composer({ commands, running, disabled, onSend, onCancel }, ref) {
   const fonts = useFontTheme();
   const [text, setText] = React.useState('');
   const [holdHint, setHoldHint] = React.useState(false);
   const [attachments, setAttachments] = React.useState<PendingAttachment[]>([]);
   const [attachMenuOpen, setAttachMenuOpen] = React.useState(false);
   const [picking, setPicking] = React.useState(false);
+  const inputRef = React.useRef<TextInput>(null);
+
+  React.useImperativeHandle(
+    ref,
+    () => ({
+      insertText: (t: string) => {
+        setText((prev) => {
+          if (!prev) return t;
+          // 已有文本且不以空白结尾时补一个空格分隔, 避免与已有内容粘连
+          return /\s$/.test(prev) ? prev + t : `${prev} ${t}`;
+        });
+        // 状态提交后再聚焦 — 同一帧内 focus 可能被渲染打断
+        setTimeout(() => inputRef.current?.focus(), 60);
+      },
+      focus: () => inputRef.current?.focus(),
+    }),
+    [],
+  );
 
   // 斜杠命令过滤: 输入以 / 开头且尚未输入空格 (仍在键入命令名)
   const slashMatch = /^\/(\S*)$/.exec(text);
@@ -169,6 +194,7 @@ export function Composer({ commands, running, disabled, onSend, onCancel }: Prop
           )}
         </Pressable>
         <TextInput
+          ref={inputRef}
           style={[styles.input, { fontFamily: fonts.sans || undefined }]}
           value={text}
           onChangeText={setText}
@@ -210,7 +236,9 @@ export function Composer({ commands, running, disabled, onSend, onCancel }: Prop
       </View>
     </View>
   );
-}
+});
+
+Composer.displayName = 'Composer';
 
 const styles = StyleSheet.create({
   wrap: {

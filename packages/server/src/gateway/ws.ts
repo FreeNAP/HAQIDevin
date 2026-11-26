@@ -5,6 +5,22 @@ import type { Store } from '../store/db.js';
 import { PairingService, verifySignature, newNonce, deviceUsable } from '../auth/pairing.js';
 import type { ClientMessage, ServerMessage, SessionEvent, PendingPermission } from '@devin-remote/protocol';
 import type { ServerConfig } from '../config.js';
+import { writeWorkdirsToConfigFile } from '../config.js';
+import { validateNewWorkdir } from '../fs/fsOps.js';
+import { readMcpConfig, readRulesConfig, writeMcpConfig, writeRulesConfig } from '../configFiles.js';
+import { gitCommit, gitDiff, gitPull, gitPush, gitStatus, GitError } from '../git.js';
+import { getAccountQuota } from '../account.js';
+import { existsSync, realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
+import {
+  copyInJail,
+  deleteInJail,
+  listDirectory,
+  moveInJail,
+  readFileInJail,
+  writeFileInJail,
+} from '../fs/fsOps.js';
+import { fsErrorCode, fsErrorMessage } from '../fs/jail.js';
 
 interface ClientState {
   ws: WebSocket;
@@ -33,6 +49,12 @@ function sanitizeEventForSnapshot(ev: import('@devin-remote/protocol').SessionEv
     return { ...ev, payload: { ...p, rawInput: cut(p.rawInput), rawOutput: cut(p.rawOutput) } };
   }
   return ev;
+}
+
+function pathIdentity(p: string): string {
+  let out = resolve(p);
+  try { out = realpathSync(out); } catch { /* 不存在的路径仍可按规范化路径比较 */ }
+  return process.platform === 'win32' ? out.toLowerCase() : out;
 }
 
 export class Gateway {
@@ -117,6 +139,36 @@ export class Gateway {
       if (!c.subscriptions.has(ev.sessionId)) continue;
       this.send(c.ws, { type: 'session.event', event: ev });
     }
+  }
+
+  private sendFsError(ws: WebSocket, err: unknown, ref?: string): void {
+    this.send(ws, {
+      type: 'error',
+      code: fsErrorCode(err),
+      message: fsErrorMessage(err),
+      ref,
+    });
+  }
+
+  private sendGitError(ws: WebSocket, err: unknown, ref?: string): void {
+    const code = err instanceof GitError ? err.code : fsErrorCode(err);
+    this.send(ws, {
+      type: 'error',
+      code,
+      message: fsErrorMessage(err),
+      ref,
+    });
+  }
+
+  private workdirListMsg(): ServerMessage {
+    return {
+      type: 'workdir.list',
+      dirs: this.config.workdirs.map((w) => ({ ...w, exists: existsSync(w.path) })),
+    };
+  }
+
+  private broadcastWorkdirList(): void {
+    this.broadcast(this.workdirListMsg());
   }
 
   private async handleMessage(state: ClientState, msg: ClientMessage): Promise<void> {
@@ -318,6 +370,15 @@ export class Gateway {
         break;
       }
 
+      case 'account.quota': {
+        try {
+          this.send(ws, await getAccountQuota(this.store));
+        } catch (e) {
+          this.send(ws, { type: 'error', code: 'quota_failed', message: String((e as Error).message) });
+        }
+        break;
+      }
+
       case 'status.request': {
         this.send(ws, {
           type: 'server.status',
@@ -370,11 +431,198 @@ export class Gateway {
       }
 
       case 'workdir.list': {
-        const { existsSync } = await import('node:fs');
-        this.send(ws, {
-          type: 'workdir.list',
-          dirs: this.config.workdirs.map((w) => ({ ...w, exists: existsSync(w.path) })),
-        });
+        this.send(ws, this.workdirListMsg());
+        break;
+      }
+
+      case 'workdir.add': {
+        try {
+          const validated = await validateNewWorkdir(msg.path);
+          const wanted = pathIdentity(validated.realPath);
+          if (this.config.workdirs.some((w) => pathIdentity(w.path) === wanted || pathIdentity(w.path) === pathIdentity(validated.inputPath))) {
+            return this.send(ws, { type: 'error', code: 'workdir_exists', message: '该工作目录已在清单内', ref: msg.path });
+          }
+          const next = [...this.config.workdirs, { path: validated.inputPath, ...(msg.label ? { label: msg.label } : {}) }];
+          writeWorkdirsToConfigFile(next);
+          this.config.workdirs = next;
+          this.broadcastWorkdirList();
+        } catch (e) {
+          this.sendFsError(ws, e, msg.path);
+        }
+        break;
+      }
+
+      case 'workdir.remove': {
+        try {
+          if (this.config.workdirs.length <= 1) {
+            return this.send(ws, { type: 'error', code: 'workdir_last', message: '至少保留一个工作目录', ref: msg.path });
+          }
+          const wanted = pathIdentity(msg.path);
+          const idx = this.config.workdirs.findIndex((w) => pathIdentity(w.path) === wanted);
+          if (idx < 0) {
+            return this.send(ws, { type: 'error', code: 'workdir_not_found', message: '该工作目录不在清单内', ref: msg.path });
+          }
+          const next = this.config.workdirs.filter((_, i) => i !== idx);
+          writeWorkdirsToConfigFile(next);
+          this.config.workdirs = next;
+          this.broadcastWorkdirList();
+        } catch (e) {
+          this.sendFsError(ws, e, msg.path);
+        }
+        break;
+      }
+
+      case 'config.rules.get': {
+        try {
+          this.send(ws, await readRulesConfig(this.config.workdirs, msg.cwd));
+        } catch (e) {
+          this.sendFsError(ws, e, msg.cwd ?? 'rules');
+        }
+        break;
+      }
+
+      case 'config.rules.set': {
+        try {
+          this.send(ws, await writeRulesConfig(this.config.workdirs, {
+            scope: msg.scope,
+            cwd: msg.cwd,
+            name: msg.name,
+            content: msg.content,
+          }));
+        } catch (e) {
+          this.sendFsError(ws, e, msg.cwd ?? msg.name ?? 'rules');
+        }
+        break;
+      }
+
+      case 'config.mcp.get': {
+        try {
+          this.send(ws, await readMcpConfig(this.config.workdirs, msg.cwd));
+        } catch (e) {
+          this.sendFsError(ws, e, msg.cwd ?? 'mcp');
+        }
+        break;
+      }
+
+      case 'config.mcp.set': {
+        try {
+          this.send(ws, await writeMcpConfig(this.config.workdirs, {
+            scope: msg.scope,
+            cwd: msg.cwd,
+            config: msg.config,
+          }));
+        } catch (e) {
+          this.sendFsError(ws, e, msg.cwd ?? 'mcp');
+        }
+        break;
+      }
+
+      case 'git.status': {
+        try {
+          this.send(ws, await gitStatus(msg.cwd, this.config.workdirs));
+        } catch (e) {
+          this.sendGitError(ws, e, msg.cwd);
+        }
+        break;
+      }
+
+      case 'git.diff': {
+        try {
+          const r = await gitDiff(msg.cwd, this.config.workdirs, msg.file, msg.staged ?? false);
+          this.send(ws, { type: 'git.diff', ...r });
+        } catch (e) {
+          this.sendGitError(ws, e, msg.cwd);
+        }
+        break;
+      }
+
+      case 'git.commit': {
+        try {
+          const r = await gitCommit(msg.cwd, this.config.workdirs, msg.message, msg.files);
+          this.send(ws, { type: 'git.result', op: 'commit', cwd: r.cwd, ok: true, stdout: r.stdout, stderr: r.stderr, commitHash: r.commitHash });
+        } catch (e) {
+          this.sendGitError(ws, e, msg.cwd);
+        }
+        break;
+      }
+
+      case 'git.push': {
+        try {
+          const r = await gitPush(msg.cwd, this.config.workdirs, msg.remote, msg.branch);
+          this.send(ws, { type: 'git.result', op: 'push', cwd: r.cwd, ok: true, stdout: r.stdout, stderr: r.stderr });
+        } catch (e) {
+          this.sendGitError(ws, e, msg.cwd);
+        }
+        break;
+      }
+
+      case 'git.pull': {
+        try {
+          const r = await gitPull(msg.cwd, this.config.workdirs, msg.remote, msg.branch);
+          this.send(ws, { type: 'git.result', op: 'pull', cwd: r.cwd, ok: true, stdout: r.stdout, stderr: r.stderr });
+        } catch (e) {
+          this.sendGitError(ws, e, msg.cwd);
+        }
+        break;
+      }
+
+      case 'fs.list': {
+        try {
+          const r = await listDirectory(msg.path, this.config.workdirs, msg.showHidden ?? false);
+          this.send(ws, { type: 'fs.list', path: r.path, entries: r.entries });
+        } catch (e) {
+          this.sendFsError(ws, e, msg.path);
+        }
+        break;
+      }
+
+      case 'fs.read': {
+        try {
+          const r = await readFileInJail(msg.path, this.config.workdirs, msg.maxBytes);
+          this.send(ws, { type: 'fs.read', ...r });
+        } catch (e) {
+          this.sendFsError(ws, e, msg.path);
+        }
+        break;
+      }
+
+      case 'fs.write': {
+        try {
+          const r = await writeFileInJail(msg.path, this.config.workdirs, msg.content);
+          this.send(ws, { type: 'fs.write', ...r });
+        } catch (e) {
+          this.sendFsError(ws, e, msg.path);
+        }
+        break;
+      }
+
+      case 'fs.delete': {
+        try {
+          const r = await deleteInJail(msg.path, this.config.workdirs, msg.recursive ?? false);
+          this.send(ws, { type: 'fs.delete', path: r.path, deleted: true });
+        } catch (e) {
+          this.sendFsError(ws, e, msg.path);
+        }
+        break;
+      }
+
+      case 'fs.move': {
+        try {
+          const r = await moveInJail(msg.src, msg.dst, this.config.workdirs, msg.overwrite ?? false);
+          this.send(ws, { type: 'fs.move', src: r.src, dst: r.dst, moved: true });
+        } catch (e) {
+          this.sendFsError(ws, e, `${msg.src} -> ${msg.dst}`);
+        }
+        break;
+      }
+
+      case 'fs.copy': {
+        try {
+          const r = await copyInJail(msg.src, msg.dst, this.config.workdirs, msg.overwrite ?? false);
+          this.send(ws, { type: 'fs.copy', src: r.src, dst: r.dst, copied: true });
+        } catch (e) {
+          this.sendFsError(ws, e, `${msg.src} -> ${msg.dst}`);
+        }
         break;
       }
 

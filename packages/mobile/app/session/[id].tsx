@@ -7,7 +7,7 @@
  *  - 进入订阅 session.subscribe (sinceSeq 补拉), 离开 unsubscribe
  */
 import React from 'react';
-import { View, FlatList, Pressable, StyleSheet, KeyboardAvoidingView, Platform, Keyboard, Alert } from 'react-native';
+import { View, FlatList, Pressable, StyleSheet, KeyboardAvoidingView, Platform, Keyboard, Alert, BackHandler } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { colors } from '../../src/theme/colors';
@@ -25,8 +25,9 @@ import {
   NoticeRow,
 } from '../../src/components/chat-items';
 import { PermissionCard } from '../../src/components/PermissionCard';
-import { Composer } from '../../src/components/Composer';
+import { Composer, ComposerHandle } from '../../src/components/Composer';
 import { ConfigPickerModal } from '../../src/components/ConfigPickerModal';
+import { FileExplorerSidebar } from '../../src/components/FileExplorerSidebar';
 import { initChatState, ChatItem } from '../../src/reducers/chatReducer';
 import type { ConfigOption } from '../../src/protocol/acp';
 import { PendingAttachment, toWireAttachments, hasImageAttachment } from '../../src/util/attachments';
@@ -94,9 +95,11 @@ export default function ChatPage() {
 
   const [pickerTarget, setPickerTarget] = React.useState<'mode' | 'model' | null>(null);
   const [resolvedFlash, setResolvedFlash] = React.useState<{ requestId: string; byDevice: string; key: number } | null>(null);
+  const [explorerOpen, setExplorerOpen] = React.useState(false);
   const prevPendingIds = React.useRef<string[]>([]);
 
   const listRef = React.useRef<FlatList<ChatItem>>(null);
+  const composerRef = React.useRef<ComposerHandle>(null);
 
   // 订阅生命周期
   React.useEffect(() => {
@@ -116,6 +119,17 @@ export default function ChatPage() {
     });
     return () => sub.remove();
   }, []);
+
+  // 侧栏打开时拦截安卓硬件返回 — 关闭面板而非退出页面
+  // (后注册先触发, 优先于 expo-router 的返回导航)
+  React.useEffect(() => {
+    if (!explorerOpen) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setExplorerOpen(false);
+      return true;
+    });
+    return () => sub.remove();
+  }, [explorerOpen]);
 
   const state = chat ?? initChatState(sessionId);
 
@@ -153,6 +167,8 @@ export default function ChatPage() {
   const modelName = currentValueName(modelOption) ?? meta?.modelId ?? null;
 
   const title = state.title ?? meta?.title ?? '未命名会话';
+  // 资源管理器根 — 优先 chat store 快照里的 session.meta.cwd, 回退会话列表 meta
+  const cwd = state.meta?.cwd ?? meta?.cwd ?? '';
   const usageText = formatUsage(state.usage?.used, state.usage?.size);
   const truncatedText = state.truncated
     ? `仅显示最近部分历史${typeof state.totalEvents === 'number' ? `（共 ${state.totalEvents} 条事件）` : ''}`
@@ -241,6 +257,19 @@ export default function ChatPage() {
               {usageText}
             </M>
           )}
+          {/* 资源管理器入口 — 有 cwd 才可用 (快照未到时禁用) */}
+          <Pressable
+            onPress={() => {
+              if (!cwd) return;
+              Keyboard.dismiss();
+              setExplorerOpen(true);
+            }}
+            hitSlop={10}
+            style={[styles.explorerBtn, explorerOpen && { backgroundColor: colors.ink }, !cwd && { opacity: 0.3 }]}
+            accessibilityLabel="打开文件面板"
+          >
+            <M size={12} weight="bold" color={explorerOpen ? colors.paper : colors.ink}>▤</M>
+          </Pressable>
           <View style={[styles.statusDot, { backgroundColor: running ? colors.acc : colors.ink3 }]} />
         </View>
 
@@ -304,6 +333,7 @@ export default function ChatPage() {
 
         {/* 输入栏 */}
         <Composer
+          ref={composerRef}
           commands={state.availableCommands}
           running={running}
           disabled={phase !== 'authed'}
@@ -311,6 +341,17 @@ export default function ChatPage() {
           onCancel={() => client.cancel(sessionId)}
         />
         <View style={{ height: Math.max(insets.bottom - 6, 0), backgroundColor: colors.paper }} />
+
+        {/* 资源管理器侧边栏 — 引用把 @相对路径 插入输入框并收起面板聚焦输入 */}
+        <FileExplorerSidebar
+          visible={explorerOpen}
+          root={cwd}
+          onClose={() => setExplorerOpen(false)}
+          onReference={(relPath) => {
+            setExplorerOpen(false);
+            composerRef.current?.insertText(`@${relPath} `);
+          }}
+        />
 
         {/* 模式/模型选择器 */}
         <ConfigPickerModal
@@ -359,6 +400,15 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   statusDot: { width: 7, height: 7, marginLeft: 6 },
+  explorerBtn: {
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1.5,
+    borderColor: colors.ink,
+    marginLeft: 6,
+  },
   offlineBar: {
     backgroundColor: colors.accSoft,
     borderBottomWidth: 1,

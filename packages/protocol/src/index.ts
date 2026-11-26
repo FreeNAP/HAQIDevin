@@ -189,6 +189,128 @@ export interface WorkdirListRequest {
   type: 'workdir.list';
 }
 
+// ---------- v2: 文件系统 / 工作目录 / 配置 / git / 账户额度 ----------
+
+export interface FsListRequest {
+  type: 'fs.list';
+  path: string;
+  showHidden?: boolean;
+}
+
+export interface FsReadRequest {
+  type: 'fs.read';
+  path: string;
+  /** 默认 256KB, 上限 1MB; 超出截断 */
+  maxBytes?: number;
+}
+
+export interface FsWriteRequest {
+  type: 'fs.write';
+  path: string;
+  content: string;
+}
+
+export interface FsDeleteRequest {
+  type: 'fs.delete';
+  path: string;
+  /** 默认 false; 非空目录必须显式 true */
+  recursive?: boolean;
+}
+
+export interface FsMoveRequest {
+  type: 'fs.move';
+  src: string;
+  dst: string;
+  overwrite?: boolean;
+}
+
+export interface FsCopyRequest {
+  type: 'fs.copy';
+  src: string;
+  dst: string;
+  overwrite?: boolean;
+}
+
+export interface WorkdirAddRequest {
+  type: 'workdir.add';
+  path: string;
+  label?: string;
+}
+
+export interface WorkdirRemoveRequest {
+  type: 'workdir.remove';
+  path: string;
+}
+
+export interface ConfigRulesGetRequest {
+  type: 'config.rules.get';
+  /** 可选: 同时读取该项目目录下的 .windsurf/.cursor 规则; 必须在 workdirs 监狱内 */
+  cwd?: string;
+}
+
+export interface ConfigRulesSetRequest {
+  type: 'config.rules.set';
+  /** 默认 global; project 需要 cwd + name */
+  scope?: 'global' | 'project';
+  cwd?: string;
+  /** project 规则文件名 (可省略 .md) */
+  name?: string;
+  content: string;
+}
+
+export interface ConfigMcpGetRequest {
+  type: 'config.mcp.get';
+  /** 可选: 同时读取项目级 .devin/mcp_config*.json; 必须在 workdirs 监狱内 */
+  cwd?: string;
+}
+
+export interface ConfigMcpSetRequest {
+  type: 'config.mcp.set';
+  /** 默认 user; project/local 需要 cwd */
+  scope?: 'user' | 'project' | 'local';
+  cwd?: string;
+  /** 完整配置对象, 必须包含 mcpServers; 写前自动 .bak-时间戳 */
+  config: Record<string, unknown>;
+}
+
+export interface GitStatusRequest {
+  type: 'git.status';
+  cwd: string;
+}
+
+export interface GitDiffRequest {
+  type: 'git.diff';
+  cwd: string;
+  file?: string;
+  staged?: boolean;
+}
+
+export interface GitCommitRequest {
+  type: 'git.commit';
+  cwd: string;
+  message: string;
+  /** 缺省提交当前已暂存内容; 传入文件列表则先 add 这些文件 */
+  files?: string[];
+}
+
+export interface GitPushRequest {
+  type: 'git.push';
+  cwd: string;
+  remote?: string;
+  branch?: string;
+}
+
+export interface GitPullRequest {
+  type: 'git.pull';
+  cwd: string;
+  remote?: string;
+  branch?: string;
+}
+
+export interface AccountQuotaRequest {
+  type: 'account.quota';
+}
+
 export type ClientMessage =
   | PairRequest
   | AuthHello
@@ -209,6 +331,24 @@ export type ClientMessage =
   | DeviceRevokeMsg
   | DeviceDeleteMsg
   | WorkdirListRequest
+  | FsListRequest
+  | FsReadRequest
+  | FsWriteRequest
+  | FsDeleteRequest
+  | FsMoveRequest
+  | FsCopyRequest
+  | WorkdirAddRequest
+  | WorkdirRemoveRequest
+  | ConfigRulesGetRequest
+  | ConfigRulesSetRequest
+  | ConfigMcpGetRequest
+  | ConfigMcpSetRequest
+  | GitStatusRequest
+  | GitDiffRequest
+  | GitCommitRequest
+  | GitPushRequest
+  | GitPullRequest
+  | AccountQuotaRequest
   | DevinSessionListRequest
   | SessionLoadMsg;
 
@@ -344,6 +484,170 @@ export interface WorkdirListMsg {
   dirs: { path: string; label?: string; exists?: boolean }[];
 }
 
+// ---------- v2 响应类型 ----------
+
+export interface FsEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'directory' | 'symlink' | 'other';
+  size: number;
+  mtimeMs: number;
+}
+
+export interface FsListMsg {
+  type: 'fs.list';
+  path: string;
+  entries: FsEntry[];
+}
+
+export interface FsReadMsg {
+  type: 'fs.read';
+  path: string;
+  content: string;
+  encoding: 'utf8' | 'base64';
+  size: number;
+  mtimeMs: number;
+  truncated: boolean;
+}
+
+export interface FsWriteMsg {
+  type: 'fs.write';
+  path: string;
+  bytes: number;
+  mtimeMs: number;
+}
+
+export interface FsDeleteResultMsg {
+  type: 'fs.delete';
+  path: string;
+  deleted: true;
+}
+
+export interface FsMoveResultMsg {
+  type: 'fs.move';
+  src: string;
+  dst: string;
+  moved: true;
+}
+
+export interface FsCopyResultMsg {
+  type: 'fs.copy';
+  src: string;
+  dst: string;
+  copied: true;
+}
+
+export interface RuleFileInfo {
+  name: string;
+  path: string;
+  provider: 'windsurf' | 'cursor' | 'devin';
+  activation: 'always-on' | 'conditional' | 'unknown';
+  content: string;
+}
+
+export interface RulesProjectInfo {
+  cwd: string;
+  files: RuleFileInfo[];
+}
+
+export interface ConfigRulesMsg {
+  type: 'config.rules';
+  global: {
+    path: string;
+    exists: boolean;
+    content: string;
+    provider: 'windsurf';
+  };
+  projects: RulesProjectInfo[];
+  writtenPath?: string;
+  backupPath?: string;
+}
+
+export interface McpConfigLayer {
+  scope: 'user' | 'legacy-windsurf' | 'legacy-claude' | 'legacy-cursor' | 'legacy-opencode' | 'project' | 'local';
+  path: string;
+  exists: boolean;
+  config?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface ConfigMcpMsg {
+  type: 'config.mcp';
+  layers: McpConfigLayer[];
+  effective: {
+    mcpServers: Record<string, unknown>;
+  };
+  writtenPath?: string;
+  backupPath?: string;
+}
+
+export interface GitChangedFile {
+  path: string;
+  oldPath?: string;
+  /** porcelain XY 两列状态, 如 ' M' / 'M ' / '??' */
+  xy: string;
+  status: 'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'ignored' | 'unmerged' | 'unknown';
+  staged: boolean;
+  unstaged: boolean;
+}
+
+export interface GitStatusMsg {
+  type: 'git.status';
+  cwd: string;
+  repoRoot: string;
+  branch: string | null;
+  upstream: string | null;
+  ahead: number | null;
+  behind: number | null;
+  files: GitChangedFile[];
+  clean: boolean;
+}
+
+export interface GitDiffMsg {
+  type: 'git.diff';
+  cwd: string;
+  file?: string;
+  diff: string;
+  truncated: boolean;
+}
+
+export interface GitResultMsg {
+  type: 'git.result';
+  op: 'commit' | 'push' | 'pull';
+  cwd: string;
+  ok: true;
+  stdout: string;
+  stderr: string;
+  commitHash?: string;
+}
+
+export interface AccountUsageAggregate {
+  totalCreditCost: number;
+  totalAcuCost: number;
+  inputTokens: number;
+  eventCount: number;
+  sessions: number;
+}
+
+export interface AccountQuotaMsg {
+  type: 'account.quota';
+  source: 'connect-rpc' | 'events-fallback' | 'none';
+  weeklyRemainingPercent: number | null;
+  dailyRemainingPercent: number | null;
+  /** unix ms; 探不到为 null */
+  dailyResetAt: number | null;
+  weeklyResetAt: number | null;
+  /** overage 余额, 单位 micros (原始响应整数; 可为负表示透支) */
+  overageBalance: number | null;
+  overageBalanceMicros: number | null;
+  acuConsumed: number | null;
+  acuLimit: number | null;
+  planName: string | null;
+  sessionUsage: AccountUsageAggregate;
+  /** connect-RPC 原始响应的安全截断投影; 不含 Authorization/apiKey */
+  raw: unknown;
+}
+
 export interface DeviceDeletedMsg {
   type: 'device.deleted';
   deviceId: string;
@@ -378,6 +682,18 @@ export type ServerMessage =
   | ServerStatus
   | DeviceListMsg | DeviceDeletedMsg
   | WorkdirListMsg
+  | FsListMsg
+  | FsReadMsg
+  | FsWriteMsg
+  | FsDeleteResultMsg
+  | FsMoveResultMsg
+  | FsCopyResultMsg
+  | ConfigRulesMsg
+  | ConfigMcpMsg
+  | GitStatusMsg
+  | GitDiffMsg
+  | GitResultMsg
+  | AccountQuotaMsg
   | ErrorMsg
   | PongMsg;
 

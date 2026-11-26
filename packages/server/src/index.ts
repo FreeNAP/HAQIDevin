@@ -82,12 +82,16 @@ async function main() {
   if (webRoot) console.log(`[devin-remote]   PWA:    http://127.0.0.1:${config.port}/`);
   if (config.publicHostname) console.log(`[devin-remote]   公网:   https://${config.publicHostname}`);
 
-  // agent 进程预热 (后台, 不阻塞启动)
-  agent.ensureReady().then(() => {
-    console.log(`[devin-remote] ✔ devin acp 就绪 (pid=${agent.pid})`);
-  }).catch((err) => {
-    console.error(`[devin-remote] ✘ devin acp 启动失败: ${err.message}`);
-  });
+  // agent 进程预热 (后台, 不阻塞启动); 实证探针可显式禁用, 避免测试实例拉起 devin 子进程
+  if (process.env.DEVIN_REMOTE_DISABLE_AGENT === '1') {
+    console.log('[devin-remote] 测试模式: 跳过 devin acp 预热');
+  } else {
+    agent.ensureReady().then(() => {
+      console.log(`[devin-remote] ✔ devin acp 就绪 (pid=${agent.pid})`);
+    }).catch((err) => {
+      console.error(`[devin-remote] ✘ devin acp 启动失败: ${err.message}`);
+    });
+  }
 
   // 优雅停机
   const shutdown = (sig: string) => {

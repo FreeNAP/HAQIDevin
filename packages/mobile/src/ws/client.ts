@@ -18,6 +18,12 @@ import type {
   PromptAttachment,
   DevinSessionInfo,
   SessionLoad,
+  FsListResult,
+  FsReadResult,
+  FsWriteResult,
+  FsDeleteResult,
+  FsMoveResult,
+  FsCopyResult,
 } from '../protocol/wire';
 import { useConnectionStore } from '../store/connection';
 import { useSessionsStore } from '../store/sessions';
@@ -32,6 +38,7 @@ import {
 import { deviceSignature } from '../crypto/hmac';
 import { genClientMsgId } from '../util/id';
 import { notifyPermissionRequest } from '../notify';
+import { normalizeFsKey } from '../util/fspath';
 
 const HEARTBEAT_MS = 15_000;
 const WATCHDOG_MS = 10_000;
@@ -40,8 +47,23 @@ const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 const CREATE_TIMEOUT_MS = 30_000;
 const LOAD_TIMEOUT_MS = 45_000;   // 加载已有会话需重放历史, 比新建更慢
+const FS_TIMEOUT_MS = 15_000;     // fs.* 请求响应超时
 
 type Timer = ReturnType<typeof setTimeout>;
+
+/** fs 结果消息统一联合 — 响应 type 与请求同名, 请求方自行按 type 窄化 */
+export type FsResultMsg = FsListResult | FsReadResult | FsWriteResult | FsDeleteResult | FsMoveResult | FsCopyResult;
+
+type FsOpType = 'fs.list' | 'fs.read' | 'fs.write' | 'fs.delete' | 'fs.move' | 'fs.copy';
+
+interface PendingFs {
+  type: FsOpType;
+  /** 归一匹配键: list/read/write/delete = path; move/copy = `${src} -> ${dst}` (与 error ref 格式一致) */
+  key: string;
+  resolve: (msg: FsResultMsg) => void;
+  reject: (e: Error) => void;
+  timer: Timer;
+}
 
 interface PendingCreate {
   cwd: string;
@@ -96,6 +118,7 @@ class DevinClient {
   private subscriptions = new Map<string, SubscriptionState>();
   private pendingCreates: PendingCreate[] = [];
   private pendingLoads: PendingLoad[] = [];
+  private pendingFs: PendingFs[] = [];
 
   // ---------- 公共 API ----------
 
@@ -305,6 +328,78 @@ class DevinClient {
     if (this.authed) this.send({ type: 'device.revoke', deviceId });
   }
 
+  // ---------- 契约 v2: 文件系统 ----------
+
+  /** 列目录 — path 须在 server workdirs 监狱内; 未连接/超时 reject; 失败经 error 消息 reject */
+  fsList(path: string, showHidden?: boolean): Promise<FsListResult> {
+    return this.fsRequest<FsListResult>('fs.list', path, { type: 'fs.list', path, showHidden });
+  }
+
+  /** 读文件内容 — 二进制时 content 为 base64 (encoding 字段标识) */
+  fsRead(path: string, maxBytes?: number): Promise<FsReadResult> {
+    return this.fsRequest<FsReadResult>('fs.read', path, { type: 'fs.read', path, maxBytes });
+  }
+
+  /** 删除 — 非空目录须 recursive=true */
+  fsDelete(path: string, recursive?: boolean): Promise<FsDeleteResult> {
+    return this.fsRequest<FsDeleteResult>('fs.delete', path, { type: 'fs.delete', path, recursive });
+  }
+
+  /** 移动 — dst 为完整目标路径 (含末段名); 目标已存在则失败, overwrite 可强制 */
+  fsMove(src: string, dst: string, overwrite?: boolean): Promise<FsMoveResult> {
+    return this.fsRequest<FsMoveResult>('fs.move', `${src} -> ${dst}`, { type: 'fs.move', src, dst, overwrite });
+  }
+
+  /** 复制 — dst 语义同 fsMove */
+  fsCopy(src: string, dst: string, overwrite?: boolean): Promise<FsCopyResult> {
+    return this.fsRequest<FsCopyResult>('fs.copy', `${src} -> ${dst}`, { type: 'fs.copy', src, dst, overwrite });
+  }
+
+  /**
+   * fs 请求统一入口 — 无请求 id 机制: 响应复用请求同名 type, 按 type+归一路径键匹配, 15s 超时;
+   * 断连时 teardown 统一 reject; 同路径并发相同请求合并兑现 (结果等价, 按先到先配)
+   */
+  private fsRequest<T extends FsResultMsg>(type: FsOpType, pathKey: string, msg: ClientMessage): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      if (!this.authed || !this.isOpen()) {
+        reject(new Error('尚未连接到主机'));
+        return;
+      }
+      const key = normalizeFsKey(pathKey);
+      const timer = setTimeout(() => {
+        this.pendingFs = this.pendingFs.filter((p) => !(p.type === type && p.key === key && p.resolve === resolve));
+        reject(new Error('请求超时 — 主机未响应'));
+      }, FS_TIMEOUT_MS);
+      this.pendingFs.push({
+        type,
+        key,
+        resolve: resolve as (m: FsResultMsg) => void,
+        reject,
+        timer,
+      });
+      this.send(msg);
+    });
+  }
+
+  /** fs 成功响应兑现 — type + 归一路径键匹配; move/copy 从响应 src/dst 重建复合键 */
+  private resolveFs(msg: FsResultMsg): void {
+    let pathKey: string;
+    if (msg.type === 'fs.move' || msg.type === 'fs.copy') {
+      const src = typeof msg.src === 'string' ? msg.src : '';
+      const dst = typeof msg.dst === 'string' ? msg.dst : '';
+      pathKey = `${src} -> ${dst}`;
+    } else {
+      pathKey = typeof msg.path === 'string' ? msg.path : '';
+    }
+    if (!pathKey) return;
+    const key = normalizeFsKey(pathKey);
+    const idx = this.pendingFs.findIndex((p) => p.type === msg.type && p.key === key);
+    if (idx < 0) return; // 迟到/未知响应 — 静默丢弃
+    const [pending] = this.pendingFs.splice(idx, 1);
+    clearTimeout(pending.timer);
+    pending.resolve(msg);
+  }
+
   isAuthed(): boolean {
     return this.authed;
   }
@@ -435,6 +530,11 @@ class DevinClient {
       for (const w of p.waiters) w.reject(new Error('连接已断开'));
     }
     this.pendingLoads = [];
+    for (const p of this.pendingFs) {
+      clearTimeout(p.timer);
+      p.reject(new Error('连接已断开'));
+    }
+    this.pendingFs = [];
     this.authed = false;
     if (closeSocket && this.ws) {
       try {
@@ -654,8 +754,17 @@ class DevinClient {
         conn.setWorkdirs(msg.dirs);
         return;
       }
+      case 'fs.list':
+      case 'fs.read':
+      case 'fs.write':
+      case 'fs.delete':
+      case 'fs.move':
+      case 'fs.copy': {
+        this.resolveFs(msg);
+        return;
+      }
       case 'error': {
-        this.handleError(msg.code, msg.message);
+        this.handleError(msg.code, msg.message, msg.ref);
         return;
       }
       default:
@@ -663,9 +772,21 @@ class DevinClient {
     }
   }
 
-  private handleError(code: string, message: string): void {
+  private handleError(code: string, message: string, ref?: string): void {
     const conn = useConnectionStore.getState();
     const phase = conn.phase;
+
+    // fs 请求级错误 — server 约定: ref = 请求 path (move/copy 为 "src -> dst" 输入原样串)
+    if (ref) {
+      const nref = normalizeFsKey(ref);
+      const idx = this.pendingFs.findIndex((p) => p.key === nref);
+      if (idx >= 0) {
+        const [pending] = this.pendingFs.splice(idx, 1);
+        clearTimeout(pending.timer);
+        pending.reject(new Error(message || '操作失败'));
+        return;
+      }
+    }
 
     if (code === 'load_failed') {
       // 契约 v2: session.load 失败 — 拒绝全部在途加载 (错误无会话上下文, 并发加载场景罕见)

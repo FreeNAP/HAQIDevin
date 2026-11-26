@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -32,7 +32,8 @@ export const DEFAULT_CONFIG: ServerConfig = {
 };
 
 export function dataDir(): string {
-  const dir = join(homedir(), '.devin-remote');
+  // 测试实例可用 DEVIN_REMOTE_DATA_DIR 隔离 state/config; 生产缺省仍是 ~/.devin-remote
+  const dir = process.env.DEVIN_REMOTE_DATA_DIR || join(homedir(), '.devin-remote');
   mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -57,6 +58,39 @@ export function loadConfig(): ServerConfig {
 
 export function saveConfig(cfg: ServerConfig): void {
   writeFileSync(configPath(), JSON.stringify(cfg, null, 2));
+}
+
+function atomicWriteText(p: string, text: string): void {
+  const tmp = `${p}.tmp`;
+  writeFileSync(tmp, text);
+  try {
+    renameSync(tmp, p);
+  } catch {
+    // Windows 上目标已存在时 rename 可能失败: 直写兜底并清 tmp
+    try { writeFileSync(p, text); } catch { /* 保留 tmp 便于下轮排查 */ }
+    try { unlinkSync(tmp); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * 只更新 config.json 的 workdirs 字段。
+ * 必须读-改-写: VSIX syncConfig/defaultModel/publicHostname 等字段可能并发存在, 不能用内存模型整文件覆盖。
+ */
+export function writeWorkdirsToConfigFile(workdirs: WorkdirEntry[]): void {
+  const p = configPath();
+  let raw: Record<string, unknown> = {};
+  if (existsSync(p)) {
+    try {
+      const parsed = JSON.parse(readFileSync(p, 'utf8')) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        raw = parsed as Record<string, unknown>;
+      }
+    } catch {
+      raw = {};
+    }
+  }
+  raw.workdirs = workdirs;
+  atomicWriteText(p, JSON.stringify(raw, null, 2));
 }
 
 /** devin 可执行文件探测 */

@@ -170,6 +170,52 @@ export interface WorkdirListRequest {
   type: 'workdir.list';
 }
 
+// ---------- 契约 v2: 文件系统 (对话页资源管理器) — 形状与 packages/protocol 对齐 ----------
+// 关联机制: 无请求 id — 响应复用请求同名 type, 按 type+path 匹配在途请求;
+// 失败走统一 error 消息, ref = 请求 path (move/copy 为 "src -> dst" 原样输入串)
+
+/** 列目录 — path 必须是绝对路径且落在 server workdirs 监狱内 */
+export interface FsListRequest {
+  type: 'fs.list';
+  path: string;
+  showHidden?: boolean;
+}
+
+/** 读文件内容 — 默认 256KB, 上限 1MB; 二进制返回 base64 */
+export interface FsReadRequest {
+  type: 'fs.read';
+  path: string;
+  maxBytes?: number;
+}
+
+/** 写文本文件 (utf8) — mobile UI 暂未使用, 镜像保留 */
+export interface FsWriteRequest {
+  type: 'fs.write';
+  path: string;
+  content: string;
+}
+
+export interface FsDeleteRequest {
+  type: 'fs.delete';
+  path: string;
+  /** 默认 false; 非空目录必须显式 true */
+  recursive?: boolean;
+}
+
+export interface FsMoveRequest {
+  type: 'fs.move';
+  src: string;
+  dst: string;              // 完整目标路径 (含末段名), 非目标目录; 已存在则报 exists 除非 overwrite
+  overwrite?: boolean;
+}
+
+export interface FsCopyRequest {
+  type: 'fs.copy';
+  src: string;
+  dst: string;
+  overwrite?: boolean;
+}
+
 export type ClientMessage =
   | PairRequest
   | AuthHello
@@ -189,7 +235,13 @@ export type ClientMessage =
   | StatusRequest
   | DeviceListRequest
   | DeviceRevokeMsg
-  | WorkdirListRequest;
+  | WorkdirListRequest
+  | FsListRequest
+  | FsReadRequest
+  | FsWriteRequest
+  | FsDeleteRequest
+  | FsMoveRequest
+  | FsCopyRequest;
 
 // ---------- server → client ----------
 
@@ -322,6 +374,62 @@ export interface WorkdirListMsg {
   dirs: { path: string; label?: string; exists?: boolean }[];
 }
 
+// ---------- 契约 v2: fs 响应 — 形状与 packages/protocol 对齐 ----------
+// 响应 type 与请求同名 (如 fs.list 的响应也是 fs.list), 按 type+path 关联;
+// 失败不产生结果消息, 而是统一 error 消息 (ref=path / "src -> dst")
+// 容错约定: 客户端宽松解析, 字段缺失/畸形不崩
+
+export interface FsEntry {
+  name: string;
+  path: string;             // 条目绝对路径 (server 已拼接, 优先于客户端 joinPath)
+  type: 'file' | 'directory' | 'symlink' | 'other';
+  size: number;             // 字节
+  mtimeMs: number;          // unix ms
+}
+
+export interface FsListResult {
+  type: 'fs.list';
+  path: string;             // 经 server resolve 归一后的输入路径
+  entries: FsEntry[];
+}
+
+export interface FsReadResult {
+  type: 'fs.read';
+  path: string;
+  content: string;          // utf8 文本或 base64 (二进制)
+  encoding: 'utf8' | 'base64';
+  size: number;
+  mtimeMs: number;
+  truncated: boolean;
+}
+
+export interface FsWriteResult {
+  type: 'fs.write';
+  path: string;
+  bytes: number;
+  mtimeMs: number;
+}
+
+export interface FsDeleteResult {
+  type: 'fs.delete';
+  path: string;
+  deleted: true;
+}
+
+export interface FsMoveResult {
+  type: 'fs.move';
+  src: string;
+  dst: string;
+  moved: true;
+}
+
+export interface FsCopyResult {
+  type: 'fs.copy';
+  src: string;
+  dst: string;
+  copied: true;
+}
+
 export interface ErrorMsg {
   type: 'error';
   code: string;
@@ -350,6 +458,12 @@ export type ServerMessage =
   | ServerStatus
   | DeviceListMsg
   | WorkdirListMsg
+  | FsListResult
+  | FsReadResult
+  | FsWriteResult
+  | FsDeleteResult
+  | FsMoveResult
+  | FsCopyResult
   | ErrorMsg
   | PongMsg;
 
