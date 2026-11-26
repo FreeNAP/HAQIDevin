@@ -530,3 +530,24 @@ HAQIDevin/
 1. 收割两个子 agent 的代码 → tsc 验证 → 联调对齐 wire 协议
 2. 补完 platform-34 → 首次本地构建验证 (15-25 分钟, 之后增量 3-8 分钟)
 3. 装机验证: 侧边栏/设备删除/模型刷新 → 继续批 A 剩余 (时间线定位/回撤) 与批 D (token 自动化/额度 UI)
+
+---
+
+## 十六、渲染对齐 devin IDE 规格 (2026-11-26 用户验收反馈)
+
+> 用户要求: mobile 工具调用显示与 devin IDE 完全一致。数据基础已实证齐备。
+
+### 事件流数据实证 (server events jsonl)
+- tool_call content 为 list, diff 项结构: `{type:'diff', path, oldText?, newText, _meta:{'cognition.ai/linesAdded':N,'cognition.ai/linesRemoved':M}}`
+- 纯新增无 oldText; 有删除时 oldText/newText 双字段齐备 → **行级红绿 diff 可渲染**
+- 命令类 tool_call 有 rawInput(命令全文)/rawOutput(输出) — 快照按 16KB 截断
+
+### 渲染规格 (对齐 IDE 截图)
+1. **命令块 (execute/bash)**: 深色卡片(zinc-900 系) + "Command in {cwd}" 小标题 + 等宽命令文本(语法着色可选) + Output 分区折叠 + 右上复制按钮 + 状态(运行中spinner/完成✓/失败✗) + "Worked for Xs" 耗时
+2. **diff 块 (edit/write)**: 卡片头(文件路径 mono + 统计 +N绿 -M红) + 逐行红绿 diff: oldText/newText 行级对比(Myers diff 或简单 LCS——JS 端有 diff 库 jsdiff 可离线内置, 不引依赖就自己写 Myers 简化版~60行) + 默认折叠超 30 行可展开 + 纯新增时整段绿底高亮 newText
+3. **思考块**: 折叠"思考"/Thoughts 标题+时长, 展开等宽灰字
+4. **plan/skill 等其余类型**: 保持现有卡片但统一深色风格与 IDE 一致(米白→深色)
+5. **加载逻辑变更 (用户明确要求)**: 打开会话只加载最新一屏(~30-50条事件), 向上滚动按需分页加载更早批次 — 不是一次 400 条; session.history API 已就绪
+
+### 施工约束
+- [id].tsx 与 chatReducer 与批 A 翻页有文件冲突 — 必须等批 A 收割后施工
