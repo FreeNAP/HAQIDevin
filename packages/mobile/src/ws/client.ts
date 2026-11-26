@@ -27,6 +27,7 @@ import type {
   AccountQuotaMsg,
   ConfigRulesMsg,
   ConfigMcpMsg,
+  SessionHistoryBatchMsg,
 } from '../protocol/wire';
 import { useConnectionStore } from '../store/connection';
 import { useSessionsStore } from '../store/sessions';
@@ -75,8 +76,10 @@ interface PendingCreate {
   timer: Timer;
 }
 
-/** 按响应 type 匹配的简单请求 (account.quota / config.rules / config.mcp) — 同类响应兑现全部在途等待者 */
+/** 按响应 type 匹配的简单请求 (account.quota / config.rules / config.mcp / session.history);
+ *  key 可选 — 同一响应 type 需要按会话等维度精确归属时使用, 缺省兑现该 type 全部等待者 */
 interface PendingSimple {
+  key?: string;
   resolve: (msg: ServerMessage) => void;
   reject: (e: Error) => void;
   timer: Timer;
@@ -148,8 +151,10 @@ class DevinClient {
   private pendingCreates: PendingCreate[] = [];
   private pendingLoads: PendingLoad[] = [];
   private pendingFs: PendingFs[] = [];
-  /** 响应 type → 在途等待者 (quota/config 类无 ref 机制的查询) */
+  /** 响应 type → 在途等待者 (quota/config/history 类无 ref 机制的查询) */
   private pendingSimple = new Map<string, PendingSimple[]>();
+  /** sessionId 级历史翻页在途锁 — 响应不含 beforeSeq, 同会话并发无法可靠归属 */
+  private historyInFlight = new Set<string>();
   private pendingDeletes: PendingDelete[] = [];
   private pendingWorkdirs: PendingWorkdir[] = [];
 
@@ -425,10 +430,26 @@ class DevinClient {
   }
 
   /**
-   * 无 ref 关联机制的查询统一入口 — 响应 type 与请求不同名但唯一 (get→config.rules / quota→account.quota),
-   * 按响应 type 匹配; 同类并发查询结果等价, 全部兑现; 断连时 teardown 统一拒绝
+   * 历史翻页 — 响应不带 beforeSeq, 因此同会话只允许一个在途请求;
+   * 不同会话用 sessionId 作 simpleRequest key, 避免同 type 响应跨会话错配
    */
-  private simpleRequest<T extends ServerMessage>(responseType: string, msg: ClientMessage): Promise<T> {
+  requestSessionHistory(sessionId: string, beforeSeq: number, limit = 200): Promise<SessionHistoryBatchMsg> {
+    if (this.historyInFlight.has(sessionId)) {
+      return Promise.reject(new Error('历史加载已在进行'));
+    }
+    const boundedLimit = Math.min(Math.max(Math.floor(limit), 1), 400);
+    const msg: ClientMessage = { type: 'session.history', sessionId, beforeSeq, limit: boundedLimit };
+    this.historyInFlight.add(sessionId);
+    return this.simpleRequest<SessionHistoryBatchMsg>('session.history.batch', msg, sessionId)
+      .finally(() => this.historyInFlight.delete(sessionId));
+  }
+
+  /**
+   * 无 ref 关联机制的查询统一入口 — 响应 type 与请求不同名但唯一 (get→config.rules / quota→account.quota),
+   * 按响应 type 匹配; 同类并发查询结果等价, 全部兑现; 断连时 teardown 统一拒绝。
+   * key 用于 history 这类响应 type 不唯一但带会话字段的查询。
+   */
+  private simpleRequest<T extends ServerMessage>(responseType: string, msg: ClientMessage, key?: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       if (!this.authed || !this.isOpen()) {
         reject(new Error('尚未连接到主机'));
@@ -444,18 +465,30 @@ class DevinClient {
         reject(new Error('请求超时 — 主机未响应'));
       }, FS_TIMEOUT_MS);
       const arr = this.pendingSimple.get(responseType) ?? [];
-      arr.push({ resolve: resolve as (m: ServerMessage) => void, reject, timer });
+      arr.push({ key, resolve: resolve as (m: ServerMessage) => void, reject, timer });
       this.pendingSimple.set(responseType, arr);
       this.send(msg);
     });
   }
 
-  /** 简单查询兑现 — 该 type 全部在途等待者共享同一响应 */
-  private resolveSimple(type: string, msg: ServerMessage): void {
+  /** 简单查询兑现 — 无 key 时该 type 全部在途等待者共享同一响应; 有 key 时仅兑现同 key 等待者 */
+  private resolveSimple(type: string, msg: ServerMessage, key?: string): void {
     const arr = this.pendingSimple.get(type);
     if (!arr || arr.length === 0) return;
-    this.pendingSimple.delete(type);
-    for (const p of arr) {
+    if (key === undefined) {
+      this.pendingSimple.delete(type);
+      for (const p of arr) {
+        clearTimeout(p.timer);
+        p.resolve(msg);
+      }
+      return;
+    }
+    const matched = arr.filter((p) => p.key === key);
+    if (matched.length === 0) return;
+    const remaining = arr.filter((p) => p.key !== key);
+    if (remaining.length > 0) this.pendingSimple.set(type, remaining);
+    else this.pendingSimple.delete(type);
+    for (const p of matched) {
       clearTimeout(p.timer);
       p.resolve(msg);
     }
@@ -872,6 +905,10 @@ class DevinClient {
           reset,
         );
         sessions.upsert(msg.session);
+        return;
+      }
+      case 'session.history.batch': {
+        this.resolveSimple('session.history.batch', msg, msg.sessionId);
         return;
       }
       case 'session.event': {

@@ -13,6 +13,7 @@ import {
   addPendingPermission,
   resolvePermission,
   applyOptimisticUserMessage,
+  applyHistoryBatch,
 } from '../reducers/chatReducer';
 
 interface ChatStoreState {
@@ -21,6 +22,7 @@ interface ChatStoreState {
   ensure: (sessionId: string) => void;
   applyEventMsg: (event: SessionEvent) => void;
   applySnapshotMsg: (sessionId: string, snap: SnapshotInput, reset: boolean) => void;
+  applyHistoryPage: (sessionId: string, events: SessionEvent[], hasMore: boolean) => void;
   addPermission: (perm: PendingPermission) => void;
   resolvePermissionMsg: (sessionId: string, requestId: string, info: { byDevice: string; optionId?: string; cancelled?: boolean }) => void;
   optimisticUser: (sessionId: string, text: string, clientMsgId: string) => void;
@@ -53,6 +55,14 @@ export const useChatStore = create<ChatStoreState>((set) => ({
     set((st) => {
       const prev = st.bySession[sessionId] ?? initChatState(sessionId);
       const next = applySnapshot(prev, snap, reset);
+      return { bySession: { ...st.bySession, [sessionId]: next } };
+    }),
+
+  applyHistoryPage: (sessionId, events, hasMore) =>
+    set((st) => {
+      const prev = st.bySession[sessionId] ?? initChatState(sessionId);
+      const next = applyHistoryBatch(prev, events, hasMore);
+      if (next === prev && st.bySession[sessionId]) return st;
       return { bySession: { ...st.bySession, [sessionId]: next } };
     }),
 

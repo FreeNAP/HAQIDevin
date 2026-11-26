@@ -1,6 +1,7 @@
 /**
  * Devin Remote 线协议 — server ↔ client (WebSocket, JSON 文本帧) — 手机端副本
- * 逐字复制自 packages/protocol/src/index.ts (仅 import 路径改为本地 acp 副本)
+ * 主体逐字复制自 packages/protocol/src/index.ts (仅 import 路径改为本地 acp 副本);
+ * 文件末尾另有 devin.exe 静态侦察得到的私有 revert ACP 类型, 尚未接入 server wire union
  * 设计原则:
  *  - ACP 语义无损嵌套: session event 的 payload 就是原始 ACP 报文
  *  - 每会话事件严格递增 seq, 客户端断线重连用 sinceSeq 补拉
@@ -90,6 +91,14 @@ export interface SessionSubscribe {
   type: 'session.subscribe';
   sessionId: string;
   sinceSeq?: number;        // 断线重连: 从此 seq 之后补拉; 0/缺省 = 全量快照
+}
+
+/** 历史翻页请求 — 拉取 beforeSeq 之前的一批 */
+export interface SessionHistoryReq {
+  type: 'session.history';
+  sessionId: string;
+  beforeSeq: number;        // 拉此 seq 之前的事件
+  limit?: number;           // 默认 200, 上限 400
 }
 
 export interface SessionUnsubscribe {
@@ -275,6 +284,7 @@ export type ClientMessage =
   | DevinSessionListRequest
   | SessionLoad
   | SessionSubscribe
+  | SessionHistoryReq
   | SessionUnsubscribe
   | SessionCreate
   | SessionPromptMsg
@@ -367,6 +377,17 @@ export interface SessionSnapshot {
   configOptions?: unknown;
   availableCommands?: unknown;
   pendingPermissions: PendingPermission[];
+}
+
+/** 历史翻页响应 — beforeSeq 之前的一批事件 (按 seq 升序) */
+export interface SessionHistoryBatchMsg {
+  type: 'session.history.batch';
+  sessionId: string;
+  events: SessionEvent[];
+  /** 是否还有更早的事件可翻页 */
+  hasMore: boolean;
+  /** 本批最小 seq — 下次翻页用它作 beforeSeq */
+  oldestSeq: number;
 }
 
 export interface SessionEventMsg {
@@ -591,6 +612,7 @@ export type ServerMessage =
   | SessionCreated
   | SessionLoaded
   | SessionSnapshot
+  | SessionHistoryBatchMsg
   | SessionEventMsg
   | SessionStatusMsg
   | PermissionRequestMsg
@@ -610,6 +632,129 @@ export type ServerMessage =
   | FsCopyResult
   | ErrorMsg
   | PongMsg;
+
+// ---------- devin 私有 revert ACP 静态侦察类型 ----------
+// 证据来自 devin.exe v3000.6.7 字符串: cognition.ai/revert/listSteps|preview|execute|resume|forkFromStep。
+// 这些类型暂未加入 ClientMessage/ServerMessage union — server 当前没有 session.revert.* 转发端点;
+// 先保留形状供后续接线, 移动端当前只提供“复制上下文到新会话重问”的降级交互。
+
+export type CognitionRevertMethod =
+  | 'cognition.ai/revert/listSteps'
+  | 'cognition.ai/revert/preview'
+  | 'cognition.ai/revert/execute'
+  | 'cognition.ai/revert/resume'
+  | 'cognition.ai/revert/forkFromStep';
+
+export type RevertStepKind = 'prompt' | 'questionAnswer' | string;
+
+export interface RevertStepInfo {
+  stepNumber: number;
+  kind?: RevertStepKind;
+  userMessageId?: string;
+  toolCallId?: string;
+  questionNodeId?: string;
+  revertTargetNodeId?: string;
+  forkTargetNodeId?: string;
+  summary?: string;
+}
+
+export interface RevertListStepsParams {
+  sessionId: string;
+}
+
+export interface RevertListStepsResponse {
+  steps: RevertStepInfo[];
+}
+
+export interface RevertPreviewParams {
+  sessionId: string;
+  targetNodeId: string;
+}
+
+export interface DiffStatsPayload {
+  insertions?: number;
+  deletions?: number;
+}
+
+/** serde 字段在二进制里可辨认为 diffStats/currentContent/path 等; 私有协议未公开, 全部保留扩展位 */
+export interface FileRevertActionPayload {
+  path?: string;
+  diffStats?: DiffStatsPayload;
+  currentContent?: string;
+  kind?: {
+    type?: 'restore' | 'delete' | 'recreate' | string;
+    originalContent?: string;
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+}
+
+export interface IrreversibleWarningPayload {
+  toolName?: string;
+  description?: string;
+  [k: string]: unknown;
+}
+
+export interface FileConflictPayload {
+  path?: string;
+  expectedHash?: string;
+  actualHash?: string;
+  [k: string]: unknown;
+}
+
+export interface RevertPreviewResponse {
+  fileActions?: FileRevertActionPayload[];
+  irreversibleWarnings?: IrreversibleWarningPayload[];
+  conflicts?: FileConflictPayload[];
+}
+
+export interface RevertExecuteParams {
+  sessionId: string;
+  targetNodeId: string;
+  force?: boolean;
+  skipFileUndo?: boolean;
+}
+
+export interface RevertUndoOutcomePayload {
+  type?: 'success' | 'skipped' | 'failed' | string;
+  path?: string;
+  reason?: string;
+  error?: string;
+  [k: string]: unknown;
+}
+
+export interface RevertExecuteResponse {
+  forkedSessionId?: string | null;
+  outcomes?: RevertUndoOutcomePayload[];
+}
+
+export interface RevertResumeParams {
+  sessionId: string;
+  questionNodeId: string;
+}
+
+export interface RevertResumeResponse {
+  stopReason?: StopReason;
+}
+
+export interface RevertForkFromStepParams {
+  sessionId: string;
+  stepNumber: number;
+}
+
+export interface RevertForkFromStepResponse {
+  forkedSessionId?: string;
+}
+
+export interface RevertStepsUpdatedNotification {
+  sessionId: string;
+  steps: RevertStepInfo[];
+}
+
+export interface RevertHistoryRewoundNotification {
+  sessionId?: string;
+  firstRemovedUserMessageId?: string;
+}
 
 // ---------- 工具函数 ----------
 

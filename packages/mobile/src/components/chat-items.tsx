@@ -14,10 +14,10 @@ import type { PlanEntry } from '../protocol/acp';
 
 // ---------- 用户气泡 ----------
 
-export function UserBubble({ item }: { item: UserItem }) {
+export function UserBubble({ item, onLongPress }: { item: UserItem; onLongPress?: () => void }) {
   return (
     <View style={styles.rowRight}>
-      <View style={styles.userBody}>
+      <Pressable style={styles.userBody} onLongPress={onLongPress} delayLongPress={420}>
         {item.pending && (
           <M size={8.5} color="rgba(250,250,247,0.6)" style={styles.pendingTag}>
             发送中…
@@ -29,7 +29,7 @@ export function UserBubble({ item }: { item: UserItem }) {
             来自 {item.deviceName}
           </M>
         ) : null}
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -45,17 +45,17 @@ function BlinkCursor() {
   return <T size={13} color={colors.acc} style={{ opacity: on ? 1 : 0 }}>▍</T>;
 }
 
-export function AgentBubble({ item, streaming }: { item: AgentItem; streaming?: boolean }) {
+export function AgentBubble({ item, streaming, onLongPress }: { item: AgentItem; streaming?: boolean; onLongPress?: () => void }) {
   return (
     <View style={styles.rowLeft}>
-      <View style={[styles.agentBody, streaming && { borderColor: colors.acc }]}>
+      <Pressable style={[styles.agentBody, streaming && { borderColor: colors.acc }]} onLongPress={onLongPress} delayLongPress={420}>
         <Markdown text={item.text} />
         {streaming && (
           <View style={{ position: 'absolute', right: 6, bottom: 4 }}>
             <BlinkCursor />
           </View>
         )}
-      </View>
+      </Pressable>
     </View>
   );
 }

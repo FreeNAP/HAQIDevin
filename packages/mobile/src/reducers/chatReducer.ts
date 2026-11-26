@@ -2,7 +2,9 @@
  * 会话事件 reducer — append-only 事件流 → 可渲染的聊天状态
  *
  * 设计要点:
- *  - 每会话事件 seq 严格递增 → 去重规则: seq <= maxSeq 的事件丢弃
+ *  - 每会话事件 seq 严格递增 → 新事件去重规则: seq <= maxSeq 的事件丢弃
+ *  - 已消化事件保留在 events 数组 (按 seq 升序); 历史翻页拿到更早点序批次后合并并全量重放,
+ *    让跨分页边界的流式 chunk / tool_call_update / plan 仍按原始事件顺序正确归并
  *  - applySnapshot(reset=true) 全量重放; (reset=false) 断线补拉增量合并, 复用同一套事件逻辑
  *  - 工具卡片按 toolCallId 合并 tool_call / tool_call_update
  *  - plan 单卡滚动更新; user/agent/thought chunk 向尾部同类 item 追加文本
@@ -108,6 +110,8 @@ export interface ChatState {
   sessionId: string;
   meta: SessionMeta | null;
   items: ChatItem[];
+  /** 已加载的原始事件 (按 seq 升序) — 历史向前翻页后用于全量重放, 保证跨批次 chunk/工具卡合并正确 */
+  events: SessionEvent[];
   maxSeq: number;
   status: SessionMeta['status'] | 'unknown';
   title: string | null;
@@ -130,6 +134,7 @@ export function initChatState(sessionId: string): ChatState {
     sessionId,
     meta: null,
     items: [],
+    events: [],
     maxSeq: 0,
     status: 'unknown',
     title: null,
@@ -228,7 +233,8 @@ function appendChunk(items: ChatItem[], kind: 'agent' | 'thought' | 'user', text
     const merged = { ...last, text: last.text + text } as ChatItem;
     return [...items.slice(0, -1), merged];
   }
-  const item = { kind, id: nextId(kind), seq, ts, text } as ChatItem;
+  // 用首个 chunk 的 seq 生成确定性 id — 历史翻页全量重放后 key 不变, FlatList 不整列重挂载
+  const item = { kind, id: `${kind}_seq_${seq}`, seq, ts, text } as ChatItem;
   return [...items, item];
 }
 
@@ -258,7 +264,7 @@ function upsertToolItem(items: ChatItem[], upd: ToolCallLike, seq: number, ts: n
 
   const next: ToolItem = {
     kind: 'tool',
-    id: prev?.id ?? nextId('tool'),
+    id: prev?.id ?? `tool_${upd.toolCallId}`,
     seq: prev?.seq ?? seq,
     ts,
     toolCallId: upd.toolCallId,
@@ -320,11 +326,11 @@ function appendUserMessage(
       return copy;
     }
   }
-  return [...items, { kind: 'user', id: nextId('user'), seq, ts, text, deviceName, clientMsgId }];
+  return [...items, { kind: 'user', id: `user_seq_${seq}`, seq, ts, text, deviceName, clientMsgId }];
 }
 
 function appendNotice(items: ChatItem[], text: string, tone: NoticeItem['tone'], seq: number, ts: number): ChatItem[] {
-  return [...items, { kind: 'notice', id: nextId('notice'), seq, ts, text, tone }];
+  return [...items, { kind: 'notice', id: `notice_seq_${seq}`, seq, ts, text, tone }];
 }
 
 // ---------- 配置/命令数组的宽松校验 ----------
@@ -378,14 +384,27 @@ function mergeConfigOptions(prev: ConfigOption[], next: ConfigOption[]): ConfigO
 // ---------- 事件应用 ----------
 
 /**
- * 应用单条会话事件 (带 seq 去重)
- * @returns 新状态; 重复/乱序事件返回原状态引用
+ * 入缓存前裁剪事件 — rawInput/rawOutput/acp-notification 不参与渲染重放且可能很大;
+ * seq/ts/kind 与渲染所需 payload 原样保留, 避免长会话翻页后移动端内存被原始工具输出拖垮
  */
-export function applyEvent(state: ChatState, event: SessionEvent): ChatState {
-  if (typeof event.seq !== 'number' || event.seq <= state.maxSeq) {
-    return state; // 去重: 每会话 seq 严格递增, 小于等于已见最大 seq 的一律丢弃
+function eventForCache(event: SessionEvent): SessionEvent {
+  if (event.kind === 'acp-notification') {
+    return { ...event, payload: null };
   }
+  if (event.kind !== 'acp-update') return event;
+  const payload = asRecord(event.payload);
+  if (!payload || (!('rawInput' in payload) && !('rawOutput' in payload))) return event;
+  const copy = { ...payload };
+  delete copy.rawInput;
+  delete copy.rawOutput;
+  return { ...event, payload: copy };
+}
 
+/**
+ * 事件归约核心 — 不做 seq 去重/事件入缓存。
+ * 快照重放与历史翻页全量重放直接走这里; 新到事件请走 exported applyEvent。
+ */
+function reduceEvent(state: ChatState, event: SessionEvent): ChatState {
   let next: ChatState = { ...state, maxSeq: event.seq };
   let items = next.items;
   const seq = event.seq;
@@ -510,6 +529,20 @@ export function applyEvent(state: ChatState, event: SessionEvent): ChatState {
   return next;
 }
 
+/**
+ * 应用单条新到会话事件 (带 seq 去重) — 同时写入原始事件缓存。
+ * 早于 maxSeq 的历史批次不能走这里 (会被当作重复丢弃), 由 applyHistoryBatch 合并后重放。
+ * @returns 新状态; 重复/乱序事件返回原状态引用
+ */
+export function applyEvent(state: ChatState, event: SessionEvent): ChatState {
+  if (typeof event.seq !== 'number' || event.seq <= state.maxSeq) {
+    return state; // 去重: 每会话 seq 严格递增, 小于等于已见最大 seq 的一律丢弃
+  }
+  const cached = eventForCache(event);
+  const withEvent: ChatState = { ...state, events: [...state.events, cached] };
+  return reduceEvent(withEvent, event);
+}
+
 // ---------- 快照应用 ----------
 
 export interface SnapshotInput {
@@ -521,6 +554,39 @@ export interface SnapshotInput {
   configOptions?: unknown;
   availableCommands?: unknown;
   pendingPermissions: PendingPermission[];
+}
+
+/** 按 seq 合并事件并升序返回; 同 seq 以已加载事件为准 (事件 append-only, 内容应相同) */
+function mergeEventsBySeq(existing: SessionEvent[], incoming: SessionEvent[]): SessionEvent[] {
+  const bySeq = new Map<number, SessionEvent>();
+  for (const ev of existing) {
+    if (typeof ev.seq === 'number') bySeq.set(ev.seq, ev);
+  }
+  for (const ev of incoming) {
+    if (typeof ev.seq === 'number' && !bySeq.has(ev.seq)) bySeq.set(ev.seq, ev);
+  }
+  return Array.from(bySeq.values()).sort((a, b) => a.seq - b.seq);
+}
+
+/** 用一组已按 seq 排序的原始事件重建渲染 items (丢弃 usage/status 等信封, 调用方保留权威现值) */
+function replayItems(sessionId: string, events: SessionEvent[]): ChatItem[] {
+  let replay = initChatState(sessionId);
+  for (const ev of events) {
+    replay = reduceEvent(replay, ev);
+  }
+  return replay.items;
+}
+
+/** 乐观用户消息不是服务器事件; 全量重建后按 clientMsgId 去重补回 */
+function appendOptimisticItems(items: ChatItem[], optimistic: UserItem[]): ChatItem[] {
+  let out = items;
+  for (const it of optimistic) {
+    const echoExists = out.some(
+      (x): x is UserItem => x.kind === 'user' && x.clientMsgId === it.clientMsgId,
+    );
+    if (!echoExists) out = [...out, it];
+  }
+  return out;
 }
 
 /**
@@ -538,10 +604,12 @@ export function applySnapshot(state: ChatState, snap: SnapshotInput, reset: bool
   // 增量快照不截断; 一旦历史缺头, 截断标记保留到下一次全量快照重新判定
   const snapTruncated = snap.truncated === true;
   const truncated = reset ? snapTruncated : base.truncated || snapTruncated;
-  let totalEvents: number | null = null;
-  if (truncated) {
-    totalEvents = snapTruncated && typeof snap.totalEvents === 'number' ? snap.totalEvents : base.totalEvents;
-  }
+  // server 当前总会回传 totalEvents; 没有该字段的增量/能力刷新消息则保留原值
+  const totalEvents = typeof snap.totalEvents === 'number'
+    ? snap.totalEvents
+    : truncated
+      ? base.totalEvents
+      : null;
 
   base = {
     ...base,
@@ -567,21 +635,68 @@ export function applySnapshot(state: ChatState, snap: SnapshotInput, reset: bool
   const snapCmds = asAvailableCommands(snap.availableCommands);
   if (snapCmds) base.availableCommands = snapCmds;
 
-  // 事件重放/补拉 — 按 seq 排序后逐条走 applyEvent (自带去重)
+  // 事件重放/补拉 — 按 seq 排序后逐条走 applyEvent (自带去重并写 events 缓存)
   const sorted = [...snap.events].sort((a, b) => a.seq - b.seq);
   for (const ev of sorted) {
     base = applyEvent(base, ev);
   }
-  // 追加保留的乐观消息 (echo 事件到达时按 clientMsgId 原位替换)
-  for (const it of carryOptimistic) {
-    const echoExists = base.items.some(
-      (x): x is UserItem => x.kind === 'user' && x.clientMsgId === it.clientMsgId,
-    );
-    if (!echoExists) {
-      base = { ...base, items: [...base.items, it] };
+
+  // 全量快照只有最近 400 条; 若本地已向前翻过页, 重置快照不得把已加载的更早点序丢掉。
+  // 事件 append-only, 直接按 seq 合并后重放, 分页边界两侧的 chunk/工具卡才能连续归并。
+  if (reset && state.events.length > 0) {
+    const merged = mergeEventsBySeq(state.events, base.events);
+    if (merged.length !== base.events.length) {
+      const reachedHead = (merged[0]?.seq ?? 0) <= 1
+        || (typeof base.totalEvents === 'number' && merged.length >= base.totalEvents);
+      base = {
+        ...base,
+        events: merged,
+        items: replayItems(state.sessionId, merged),
+        maxSeq: Math.max(base.maxSeq, merged[merged.length - 1]?.seq ?? 0),
+        // 本地一旦经 hasMore=false 判定完整, 后续限量快照自身的 truncated 不得让完整历史重新缺头
+        truncated: !state.truncated || reachedHead ? false : base.truncated,
+      };
     }
   }
+
+  // 追加保留的乐观消息 (echo 事件到达时按 clientMsgId 原位替换/去重)
+  base = { ...base, items: appendOptimisticItems(base.items, carryOptimistic) };
   return base;
+}
+
+// ---------- 历史翻页 ----------
+
+/**
+ * 合并一批更早的历史事件并重建渲染 items。
+ * 这些事件 seq 都小于当前 maxSeq, 不能走 applyEvent 的增量路径; 全量重放是最简单且正确的方案:
+ * 跨分页边界的 agent/user chunk 会重新拼接, tool_call_update 会落回较早创建的同一个工具卡。
+ * hasMore=false 表示已经翻到会话开头, 本地历史完整, truncated 标记随之清除。
+ */
+export function applyHistoryBatch(state: ChatState, batchEvents: SessionEvent[], hasMore: boolean): ChatState {
+  const valid = batchEvents
+    .filter((ev) => ev && ev.sessionId === state.sessionId && typeof ev.seq === 'number')
+    .map(eventForCache);
+  const seen = new Set(state.events.map((ev) => ev.seq));
+  const hasNewEvents = valid.some((ev) => !seen.has(ev.seq));
+
+  if (!hasNewEvents) {
+    if (state.truncated === hasMore) return state;
+    return { ...state, truncated: hasMore };
+  }
+
+  const merged = mergeEventsBySeq(state.events, valid);
+  const carryOptimistic = state.items.filter((it): it is UserItem => it.kind === 'user' && Boolean(it.pending));
+  const replayed = replayItems(state.sessionId, merged);
+  const reachedHead = (merged[0]?.seq ?? 0) <= 1
+    || (typeof state.totalEvents === 'number' && merged.length >= state.totalEvents);
+
+  return {
+    ...state,
+    events: merged,
+    items: appendOptimisticItems(replayed, carryOptimistic),
+    maxSeq: Math.max(state.maxSeq, merged[merged.length - 1]?.seq ?? 0),
+    truncated: hasMore && !reachedHead,
+  };
 }
 
 // ---------- 权限 (不走事件流, 由独立消息驱动) ----------

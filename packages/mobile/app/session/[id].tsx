@@ -7,7 +7,21 @@
  *  - 进入订阅 session.subscribe (sinceSeq 补拉), 离开 unsubscribe
  */
 import React from 'react';
-import { View, FlatList, Pressable, StyleSheet, KeyboardAvoidingView, Platform, Keyboard, Alert, BackHandler } from 'react-native';
+import {
+  View,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  Keyboard,
+  Alert,
+  BackHandler,
+  ActivityIndicator,
+  Clipboard,
+  Modal,
+  ScrollView,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
 import { colors } from '../../src/theme/colors';
@@ -32,12 +46,148 @@ import { initChatState, ChatItem } from '../../src/reducers/chatReducer';
 import type { ConfigOption } from '../../src/protocol/acp';
 import { PendingAttachment, toWireAttachments, hasImageAttachment } from '../../src/util/attachments';
 
-function renderItem(item: ChatItem, streamingAgentId: string | null) {
+interface MessageActionTarget {
+  itemId: string;
+  kind: 'user' | 'agent';
+  title: string;
+  text: string;
+}
+
+interface HistoryPageResult {
+  loadedCount: number;
+  hasMore: boolean;
+}
+
+interface TimelineBucket {
+  key: string;
+  startTs: number;
+  firstTs: number;
+  lastTs: number;
+  count: number;
+}
+
+interface ScrollToIndexFailedInfo {
+  index: number;
+  highestMeasuredFrameIndex: number;
+  averageItemLength: number;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function startOfDay(ts: number): number {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : `${n}`;
+}
+
+function formatDate(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}`;
+}
+
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+/** 从已加载 items 汇总日期锚点; firstTs 用作跳到某天开头的目标 */
+function buildTimelineBuckets(items: ChatItem[]): TimelineBucket[] {
+  const map = new Map<string, TimelineBucket>();
+  for (const item of items) {
+    if (typeof item.ts !== 'number' || item.ts <= 0) continue;
+    const startTs = startOfDay(item.ts);
+    const key = `${startTs}`;
+    const cur = map.get(key);
+    if (cur) {
+      cur.firstTs = Math.min(cur.firstTs, item.ts);
+      cur.lastTs = Math.max(cur.lastTs, item.ts);
+      cur.count += 1;
+    } else {
+      map.set(key, { key, startTs, firstTs: item.ts, lastTs: item.ts, count: 1 });
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => b.startTs - a.startTs);
+}
+
+/**
+ * items 按 seq 排列而非严格按 ts 排列 (工具卡会原地更新 ts), 因此不用二分;
+ * 直接扫描找 ts 最接近者 — 千级消息量成本可忽略且不受乱序 ts 影响
+ */
+function nearestItemIndexByTs(items: ChatItem[], targetTs: number): number {
+  if (items.length === 0) return -1;
+  let best = 0;
+  let bestDiff = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < items.length; i += 1) {
+    const diff = Math.abs(items[i]!.ts - targetTs);
+    if (diff < bestDiff) {
+      best = i;
+      bestDiff = diff;
+    }
+  }
+  return best;
+}
+
+const REASK_CONTEXT_MAX_CHARS = 7000;
+const REASK_SINGLE_ITEM_MAX_CHARS = 1200;
+
+function clipReaskText(text: string, maxChars: number): string {
+  const clean = text.trim();
+  return clean.length > maxChars ? `${clean.slice(0, maxChars - 1)}…` : clean;
+}
+
+/**
+ * revert 降级分支 prompt — server 尚未暴露 devin 私有 revert ACP 时:
+ * 复制目标用户消息之前的最近对话上下文, 在新会话中重新提出该问题。
+ * 只带 user/agent 文本; 工具执行细节与图片附件无法从历史事件中无损复原, 明确标注为摘要上下文。
+ */
+function buildReaskPrompt(items: ChatItem[], targetItemId: string): string | null {
+  const targetIndex = items.findIndex((it) => it.id === targetItemId);
+  if (targetIndex < 0) return null;
+  const target = items[targetIndex]!;
+  if (target.kind !== 'user' || !target.text.trim()) return null;
+
+  const lines: string[] = [];
+  for (const it of items.slice(0, targetIndex)) {
+    if ((it.kind !== 'user' && it.kind !== 'agent') || !it.text.trim()) continue;
+    const role = it.kind === 'user' ? '用户' : 'Agent';
+    lines.push(`${role}: ${clipReaskText(it.text, REASK_SINGLE_ITEM_MAX_CHARS)}`);
+  }
+  const question = target.text.trim();
+  if (lines.length === 0) return question;
+
+  const selected = lines.slice(-12);
+  while (selected.length > 1 && selected.join('\n\n').length > REASK_CONTEXT_MAX_CHARS) {
+    selected.shift();
+  }
+  let context = selected.join('\n\n');
+  if (context.length > REASK_CONTEXT_MAX_CHARS) {
+    context = `${context.slice(0, REASK_CONTEXT_MAX_CHARS - 40)}\n…[更早上下文已省略]`;
+  }
+  return [
+    '以下是从另一个会话复制的上下文摘要。请先利用这些上下文理解背景, 然后重新回答最后的用户问题; 不要复述本说明。',
+    '',
+    '[上下文摘要]',
+    context,
+    '',
+    '[需要重新回答的用户问题]',
+    question,
+  ].join('\n');
+}
+
+function renderItem(
+  item: ChatItem,
+  streamingAgentId: string | null,
+  onMessageLongPress: (item: ChatItem) => void,
+) {
   switch (item.kind) {
     case 'user':
-      return <UserBubble item={item} />;
+      return <UserBubble item={item} onLongPress={() => onMessageLongPress(item)} />;
     case 'agent':
-      return <AgentBubble item={item} streaming={item.id === streamingAgentId} />;
+      return <AgentBubble item={item} streaming={item.id === streamingAgentId} onLongPress={() => onMessageLongPress(item)} />;
     case 'thought':
       return <ThoughtCard item={item} />;
     case 'tool':
@@ -96,10 +246,78 @@ export default function ChatPage() {
   const [pickerTarget, setPickerTarget] = React.useState<'mode' | 'model' | null>(null);
   const [resolvedFlash, setResolvedFlash] = React.useState<{ requestId: string; byDevice: string; key: number } | null>(null);
   const [explorerOpen, setExplorerOpen] = React.useState(false);
+  const [timelineOpen, setTimelineOpen] = React.useState(false);
+  const [historyLoading, setHistoryLoading] = React.useState(false);
+  const [historyError, setHistoryError] = React.useState<string | null>(null);
+  const [timelineJumping, setTimelineJumping] = React.useState(false);
+  const [forking, setForking] = React.useState(false);
+  const [messageAction, setMessageAction] = React.useState<MessageActionTarget | null>(null);
+  const [copyFlash, setCopyFlash] = React.useState(false);
+  const [highlightItemId, setHighlightItemId] = React.useState<string | null>(null);
   const prevPendingIds = React.useRef<string[]>([]);
 
   const listRef = React.useRef<FlatList<ChatItem>>(null);
   const composerRef = React.useRef<ComposerHandle>(null);
+  const historyRequestRef = React.useRef<Promise<HistoryPageResult | null> | null>(null);
+  const mountedRef = React.useRef(true);
+  const copyTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const highlightTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollRetryRef = React.useRef(new Map<number, number>());
+  const forkingRef = React.useRef(false);
+
+  React.useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    };
+  }, []);
+
+  /**
+   * 向上翻一页历史 — 组件级共享在途 Promise:
+   * onEndReached 与时间线跳转可能同时触发, 共享同一个请求而不是并发重复拉取
+   */
+  const loadEarlier = React.useCallback(async (): Promise<HistoryPageResult | null> => {
+    if (historyRequestRef.current) return historyRequestRef.current;
+
+    const run = async (): Promise<HistoryPageResult | null> => {
+      const cur = useChatStore.getState().bySession[sessionId];
+      if (!cur || !cur.truncated) return { loadedCount: 0, hasMore: false };
+      const beforeSeq = cur.events[0]?.seq;
+      if (!beforeSeq || beforeSeq <= 1) return { loadedCount: 0, hasMore: false };
+
+      if (mountedRef.current) {
+        setHistoryLoading(true);
+        setHistoryError(null);
+      }
+      try {
+        const batch = await client.requestSessionHistory(sessionId, beforeSeq, 200);
+        useChatStore.getState().applyHistoryPage(batch.sessionId, batch.events, batch.hasMore);
+        return { loadedCount: batch.events.length, hasMore: batch.hasMore };
+      } catch (err) {
+        if (mountedRef.current) {
+          setHistoryError(err instanceof Error ? err.message : '历史加载失败');
+        }
+        return null;
+      } finally {
+        if (mountedRef.current) setHistoryLoading(false);
+      }
+    };
+
+    const request = Promise.resolve().then(run);
+    historyRequestRef.current = request;
+    // 必须覆盖所有早退路径; 否则“本无更多历史”的一次调用会把在途锁永久卡死
+    void request.then(
+      () => {
+        if (historyRequestRef.current === request) historyRequestRef.current = null;
+      },
+      () => {
+        if (historyRequestRef.current === request) historyRequestRef.current = null;
+      },
+    );
+    return request;
+  }, [sessionId]);
 
   // 订阅生命周期
   React.useEffect(() => {
@@ -196,6 +414,158 @@ export default function ChatPage() {
         ? modelOption
         : null;
 
+  const timelineBuckets = React.useMemo(() => buildTimelineBuckets(state.items), [state.items]);
+  const oldestLoadedTs = state.events[0]?.ts ?? state.items[0]?.ts ?? null;
+  const newestLoadedTs = state.items[state.items.length - 1]?.ts ?? null;
+
+  /** inverted 列表到底(视觉上到最旧消息) → 自动向前翻一页; 错误时停止自动重试, 顶部 footer 手动重试 */
+  const onEndReached = React.useCallback(() => {
+    const cur = useChatStore.getState().bySession[sessionId];
+    if (!cur?.truncated || historyLoading || historyError) return;
+    void loadEarlier();
+  }, [sessionId, historyLoading, historyError, loadEarlier]);
+
+  const onMessageLongPress = React.useCallback((item: ChatItem) => {
+    if ((item.kind !== 'user' && item.kind !== 'agent') || !item.text.trim()) return;
+    setMessageAction({
+      itemId: item.id,
+      kind: item.kind,
+      title: item.kind === 'user' ? '用户消息' : 'Agent 消息',
+      text: item.text,
+    });
+  }, []);
+
+  const copyMessageAction = React.useCallback(() => {
+    if (!messageAction) return;
+    Clipboard.setString(messageAction.text);
+    setMessageAction(null);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    setCopyFlash(true);
+    copyTimerRef.current = setTimeout(() => {
+      if (mountedRef.current) setCopyFlash(false);
+    }, 1600);
+  }, [messageAction]);
+
+  /**
+   * “从此处重新提问”降级实现 — devin 二进制里确有私有 revert ACP, 但 server 当前未暴露;
+   * 因此新建同 cwd 会话, 复制目标问题前的文本上下文并重发该问题 (不动原会话/文件)
+   */
+  const reaskFromMessage = React.useCallback(async (target: MessageActionTarget) => {
+    if (forkingRef.current) return;
+    setMessageAction(null);
+    if (!client.isAuthed()) {
+      Alert.alert('无法创建分支', '当前未连接到主机');
+      return;
+    }
+    if (!cwd) {
+      Alert.alert('无法创建分支', '会话工作目录尚未加载, 请稍后重试');
+      return;
+    }
+    const cur = useChatStore.getState().bySession[sessionId];
+    const prompt = cur ? buildReaskPrompt(cur.items, target.itemId) : null;
+    if (!prompt) {
+      Alert.alert('无法定位该消息', '历史翻页重建后消息已变化, 请重新长按目标消息');
+      return;
+    }
+    forkingRef.current = true;
+    setForking(true);
+    try {
+      const created = await client.createSession(cwd);
+      const sent = client.sendPrompt(created.sessionId, prompt);
+      if (!sent) throw new Error('连接已断开, 未能发送分支问题');
+      router.push(`/session/${encodeURIComponent(created.sessionId)}`);
+    } catch (err) {
+      Alert.alert('创建分支失败', err instanceof Error ? err.message : '请稍后重试');
+    } finally {
+      forkingRef.current = false;
+      if (mountedRef.current) setForking(false);
+    }
+  }, [cwd, sessionId]);
+
+  /** 高亮并滚动到 items 中的目标 — inverted data 是逆序, FlatList index 需要倒算 */
+  const focusItem = React.useCallback((itemId: string): boolean => {
+    const cur = useChatStore.getState().bySession[sessionId];
+    if (!cur) return false;
+    const itemIndex = cur.items.findIndex((it) => it.id === itemId);
+    if (itemIndex < 0) return false;
+    const listIndex = cur.items.length - 1 - itemIndex;
+    scrollRetryRef.current.delete(listIndex);
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    setHighlightItemId(itemId);
+    // 历史批次刚注入时先让一帧渲染完成; scrollToIndex 对未渲染行的失败由 onScrollToIndexFailed 近似兜底
+    setTimeout(() => {
+      listRef.current?.scrollToIndex({ index: listIndex, animated: true, viewPosition: 0.5 });
+    }, 120);
+    highlightTimerRef.current = setTimeout(() => {
+      if (mountedRef.current) setHighlightItemId(null);
+    }, 2800);
+    return true;
+  }, [sessionId]);
+
+  /**
+   * scrollToIndex 对高度不等且未渲染的行不可靠 — RN 官方兜底:
+   * 先按平均高度滚到近似位置, 渲染出目标附近后再重试; 最多 2 次, 之后保留近似位置+高亮
+   */
+  const onScrollToIndexFailed = React.useCallback((info: ScrollToIndexFailedInfo) => {
+    const attempts = (scrollRetryRef.current.get(info.index) ?? 0) + 1;
+    scrollRetryRef.current.set(info.index, attempts);
+    const approximateOffset = Math.max(0, info.averageItemLength * info.index);
+    listRef.current?.scrollToOffset({ offset: approximateOffset, animated: false });
+    if (attempts <= 2) {
+      setTimeout(() => {
+        listRef.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.5 });
+      }, 140);
+    }
+  }, []);
+
+  /**
+   * 时间线定位 — 若目标时间早于已加载范围, 先逐页向前回溯;
+   * 完成后按 ts 找最近 item 并滚动到近似/精确位置
+   */
+  const jumpToTimestamp = React.useCallback(async (targetTs: number) => {
+    setTimelineOpen(false);
+    const initial = useChatStore.getState().bySession[sessionId];
+    if (!initial || initial.items.length === 0) return;
+    setTimelineJumping(true);
+    let failed = false;
+    try {
+      const totalEvents = initial.totalEvents ?? Math.max(initial.events.length, 400);
+      const maxPages = Math.min(100, Math.max(4, Math.ceil(totalEvents / 200) + 2));
+      let pages = 0;
+      while (pages < maxPages) {
+        const cur = useChatStore.getState().bySession[sessionId];
+        if (!cur) break;
+        const oldestTs = cur.events[0]?.ts ?? cur.items[0]?.ts ?? 0;
+        if (!cur.truncated || oldestTs <= targetTs) break;
+        const beforeSeq = cur.events[0]?.seq ?? 0;
+        const page = await loadEarlier();
+        if (!page) {
+          failed = true;
+          break;
+        }
+        pages += 1;
+        const after = useChatStore.getState().bySession[sessionId];
+        const afterSeq = after?.events[0]?.seq ?? beforeSeq;
+        if (!page.hasMore || page.loadedCount === 0 || afterSeq >= beforeSeq) break;
+      }
+
+      const finalState = useChatStore.getState().bySession[sessionId];
+      if (!finalState) return;
+      // targetTs=0 是“会话开头”语义: 直接取首个 item, 避免工具卡 ts 被后续 update 改写后误选第二条
+      const itemIndex = targetTs <= 0
+        ? (finalState.items.length > 0 ? 0 : -1)
+        : nearestItemIndexByTs(finalState.items, targetTs);
+      if (itemIndex >= 0) {
+        focusItem(finalState.items[itemIndex]!.id);
+      }
+      if (failed) {
+        Alert.alert('历史回溯失败', '已定位到当前已加载的最接近消息; 可上翻后重试');
+      }
+    } finally {
+      if (mountedRef.current) setTimelineJumping(false);
+    }
+  }, [sessionId, loadEarlier, focusItem]);
+
   /**
    * 发送 — 组装契约 v2 attachments 随 session.prompt 发出
    * 返回 false 让 Composer 保留现场 (模型不支持图片时拦截)
@@ -257,6 +627,19 @@ export default function ChatPage() {
               {usageText}
             </M>
           )}
+          {/* 时间线入口 — 按日期/快捷时间点定位 */}
+          <Pressable
+            onPress={() => {
+              Keyboard.dismiss();
+              setTimelineOpen(true);
+            }}
+            hitSlop={10}
+            disabled={state.items.length === 0}
+            style={[styles.explorerBtn, timelineOpen && { backgroundColor: colors.ink }, state.items.length === 0 && { opacity: 0.3 }]}
+            accessibilityLabel="打开时间线"
+          >
+            <M size={10.5} weight="bold" color={timelineOpen ? colors.paper : colors.ink}>时</M>
+          </Pressable>
           {/* 资源管理器入口 — 有 cwd 才可用 (快照未到时禁用) */}
           <Pressable
             onPress={() => {
@@ -291,6 +674,26 @@ export default function ChatPage() {
           </Pressable>
         )}
 
+        {/* 时间线回溯中提示 */}
+        {timelineJumping && (
+          <View style={styles.jumpBar}>
+            <ActivityIndicator size="small" color={colors.acc} />
+            <T size={10.5} weight="semibold" color={colors.ink2} style={{ marginLeft: 7 }}>
+              正在回溯历史并定位…
+            </T>
+          </View>
+        )}
+
+        {/* revert 降级分支创建中 */}
+        {forking && (
+          <View style={styles.jumpBar}>
+            <ActivityIndicator size="small" color={colors.acc} />
+            <T size={10.5} weight="semibold" color={colors.ink2} style={{ marginLeft: 7 }}>
+              正在创建新会话并复制上下文…
+            </T>
+          </View>
+        )}
+
         {/* 消息流 */}
         <FlatList
           ref={listRef}
@@ -299,7 +702,45 @@ export default function ChatPage() {
           data={reversed}
           inverted
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <View>{renderItem(item, streamingAgentId)}</View>}
+          renderItem={({ item }) => (
+            <View style={item.id === highlightItemId ? styles.highlightWrap : undefined}>
+              {renderItem(item, streamingAgentId, onMessageLongPress)}
+            </View>
+          )}
+          onEndReached={onEndReached}
+          onEndReachedThreshold={0.25}
+          onScrollToIndexFailed={onScrollToIndexFailed}
+          ListFooterComponent={
+            state.items.length > 0 ? (
+              <View style={styles.historyFooter}>
+                {historyLoading ? (
+                  <View style={styles.historyLoadingRow}>
+                    <ActivityIndicator size="small" color={colors.acc} />
+                    <M size={9.5} color={colors.ink3} style={{ marginLeft: 7 }}>
+                      正在加载更早历史…
+                    </M>
+                  </View>
+                ) : historyError ? (
+                  <Pressable onPress={() => void loadEarlier()} hitSlop={8}>
+                    <M size={9.5} weight="bold" color={colors.acc} style={{ textAlign: 'center' }}>
+                      历史加载失败 — 点击重试
+                    </M>
+                    <M size={8.5} color={colors.ink3} numberOfLines={1} style={{ marginTop: 3, textAlign: 'center' }}>
+                      {historyError}
+                    </M>
+                  </Pressable>
+                ) : state.truncated ? (
+                  <M size={9.5} color={colors.ink3}>
+                    继续上翻加载更早历史
+                  </M>
+                ) : (
+                  <M size={9.5} color={colors.ink3}>
+                    — 已到会话开头 —
+                  </M>
+                )}
+              </View>
+            ) : null
+          }
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
               {/* inverted 列表里这个组件是上下翻转的, 用 transform 翻回来 */}
@@ -318,6 +759,15 @@ export default function ChatPage() {
           <View style={styles.resolvedBar}>
             <T size={10.5} weight="semibold" color={colors.ink2}>
               权限请求已由 {resolvedFlash.byDevice} 处理
+            </T>
+          </View>
+        )}
+
+        {/* 复制成功轻提示 */}
+        {copyFlash && (
+          <View style={styles.resolvedBar}>
+            <T size={10.5} weight="semibold" color={colors.ink2}>
+              已复制到剪贴板
             </T>
           </View>
         )}
@@ -373,6 +823,133 @@ export default function ChatPage() {
           }}
           onClose={() => setPickerTarget(null)}
         />
+
+        {/* 消息长按菜单 — 复制原始 markdown 文本 */}
+        <Modal visible={messageAction !== null} transparent animationType="fade" onRequestClose={() => setMessageAction(null)}>
+          <Pressable style={styles.menuBackdrop} onPress={() => setMessageAction(null)}>
+            {messageAction && (
+              <Pressable onPress={(e) => e.stopPropagation()} style={styles.menuSheet}>
+                <View style={styles.menuHead}>
+                  <M size={10.5} weight="bold">
+                    {messageAction.title}
+                  </M>
+                  <T size={11} color={colors.ink2} numberOfLines={4} style={{ marginTop: 7 }}>
+                    {messageAction.text}
+                  </T>
+                </View>
+                <Pressable onPress={copyMessageAction} style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: colors.paper2 }]}>
+                  <T size={12} weight="medium" color={colors.ink}>
+                    复制文本
+                  </T>
+                </Pressable>
+                {messageAction.kind === 'user' && (
+                  <Pressable
+                    onPress={() => void reaskFromMessage(messageAction)}
+                    disabled={forking}
+                    style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: colors.paper2 }, forking && { opacity: 0.45 }]}
+                  >
+                    <T size={12} weight="medium" color={colors.ink}>
+                      从此处重新提问（新会话）
+                    </T>
+                    <M size={8.5} color={colors.ink3} style={{ marginTop: 3 }}>
+                      复制此前文本上下文; 不改动原会话与文件
+                    </M>
+                  </Pressable>
+                )}
+                <Pressable onPress={() => setMessageAction(null)} style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: colors.paper2 }]}>
+                  <T size={12} color={colors.ink3} style={{ textAlign: 'center' }}>
+                    取消
+                  </T>
+                </Pressable>
+              </Pressable>
+            )}
+          </Pressable>
+        </Modal>
+
+        {/* 时间线 — 快捷时间点 + 已加载日期锚点; 目标超出已加载范围时自动向前翻页 */}
+        <Modal visible={timelineOpen} transparent animationType="fade" onRequestClose={() => setTimelineOpen(false)}>
+          <Pressable style={styles.menuBackdrop} onPress={() => setTimelineOpen(false)}>
+            <Pressable onPress={(e) => e.stopPropagation()} style={styles.timelineSheet}>
+              <View style={styles.menuHead}>
+                <M size={10.5} weight="bold" uppercase ls={0.8}>
+                  时间线定位
+                </M>
+                <M size={8.5} color={colors.ink3} style={{ marginTop: 4 }}>
+                  {oldestLoadedTs && newestLoadedTs
+                    ? `已加载 ${formatDate(oldestLoadedTs)} ${formatTime(oldestLoadedTs)} — ${formatDate(newestLoadedTs)} ${formatTime(newestLoadedTs)}`
+                    : '暂无可定位消息'}
+                </M>
+                {state.truncated && (
+                  <M size={8.5} color={colors.warn} style={{ marginTop: 3 }}>
+                    更早历史尚未加载, 选择时间点会自动回溯
+                  </M>
+                )}
+              </View>
+
+              <View style={styles.quickGrid}>
+                {([
+                  { key: 'latest', label: '最新', ts: null },
+                  { key: 'today', label: '今天', ts: startOfDay(Date.now()) },
+                  { key: 'yesterday', label: '昨天', ts: startOfDay(Date.now() - DAY_MS) },
+                  { key: 'week', label: '7 天前', ts: startOfDay(Date.now() - 7 * DAY_MS) },
+                  { key: 'month', label: '30 天前', ts: startOfDay(Date.now() - 30 * DAY_MS) },
+                  { key: 'start', label: '会话开头', ts: 0 },
+                ] as const).map((action) => (
+                  <Pressable
+                    key={action.key}
+                    onPress={() => {
+                      if (action.ts === null) {
+                        setTimelineOpen(false);
+                        listRef.current?.scrollToOffset({ offset: 0, animated: true });
+                      } else {
+                        void jumpToTimestamp(action.ts);
+                      }
+                    }}
+                    style={({ pressed }) => [styles.quickBtn, pressed && { backgroundColor: colors.paper2 }]}
+                  >
+                    <M size={9.5} weight="bold" color={colors.ink}>
+                      {action.label}
+                    </M>
+                  </Pressable>
+                ))}
+              </View>
+
+              <ScrollView style={styles.timelineList} keyboardShouldPersistTaps="handled">
+                {timelineBuckets.length === 0 ? (
+                  <M size={9.5} color={colors.ink3} style={{ textAlign: 'center', paddingVertical: 18 }}>
+                    暂无日期锚点
+                  </M>
+                ) : (
+                  timelineBuckets.map((bucket) => (
+                    <Pressable
+                      key={bucket.key}
+                      onPress={() => void jumpToTimestamp(bucket.firstTs)}
+                      style={({ pressed }) => [styles.timelineRow, pressed && { backgroundColor: colors.paper2 }]}
+                    >
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <T size={12} weight="semibold" color={colors.ink}>
+                          {formatDate(bucket.startTs)}
+                        </T>
+                        <M size={8.5} color={colors.ink3} style={{ marginTop: 2 }}>
+                          {formatTime(bucket.firstTs)} — {formatTime(bucket.lastTs)}
+                        </M>
+                      </View>
+                      <M size={9} color={colors.ink3}>
+                        {bucket.count} 项
+                      </M>
+                    </Pressable>
+                  ))
+                )}
+              </ScrollView>
+
+              <Pressable onPress={() => setTimelineOpen(false)} style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: colors.paper2 }]}>
+                <T size={12} color={colors.ink3} style={{ textAlign: 'center' }}>
+                  关闭
+                </T>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
       </View>
     </KeyboardAvoidingView>
   );
@@ -423,13 +1000,92 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     alignItems: 'center',
   },
+  jumpBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.accSoft,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.hairline,
+    paddingVertical: 7,
+  },
   flowContent: { paddingHorizontal: 12, paddingVertical: 12 },
   emptyWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  historyFooter: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    minHeight: 42,
+  },
+  historyLoadingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  highlightWrap: {
+    borderLeftWidth: 3,
+    borderLeftColor: colors.acc,
+    backgroundColor: colors.accSoft,
+    paddingLeft: 5,
+    marginLeft: -5,
+  },
   resolvedBar: {
     borderTopWidth: 1,
     borderTopColor: colors.hairline,
     backgroundColor: colors.paper2,
     paddingVertical: 7,
     alignItems: 'center',
+  },
+  menuBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(17,19,17,0.35)',
+    justifyContent: 'flex-end',
+  },
+  menuSheet: {
+    backgroundColor: colors.card,
+    borderTopWidth: 2,
+    borderTopColor: colors.ink,
+    paddingBottom: 10,
+  },
+  timelineSheet: {
+    backgroundColor: colors.card,
+    borderTopWidth: 2,
+    borderTopColor: colors.ink,
+    paddingBottom: 10,
+    maxHeight: '78%',
+  },
+  menuHead: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.ink,
+  },
+  menuRow: {
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.hairline,
+  },
+  quickGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.hairline,
+  },
+  quickBtn: {
+    borderWidth: 1.5,
+    borderColor: colors.ink,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    backgroundColor: colors.card,
+  },
+  timelineList: { maxHeight: 310 },
+  timelineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.hairline,
   },
 });
