@@ -76,6 +76,7 @@ export interface SessionSubscribe {
   type: 'session.subscribe';
   sessionId: string;
   sinceSeq?: number;        // 断线重连: 从此 seq 之后补拉; 0/缺省 = 全量快照
+  limit?: number;           // 全量快照事件上限: 取最新 N 条; 默认 400, 上限 400 (增量补拉不截断)
 }
 
 /** 历史翻页请求 — 拉取 beforeSeq 之前的一批 */
@@ -311,6 +312,42 @@ export interface AccountQuotaRequest {
   type: 'account.quota';
 }
 
+// ---------- revert (devin 私有 ACP 方法 cognition.ai/revert/* 的 ws 转发) ----------
+// 宽松透传设计: server 不严格校验 params, client 额外字段原样进 JSON-RPC params,
+// agent 错误响应原样透传回 client — 便于私有 schema 偏差时的真机调试
+
+export interface SessionRevertListStepsMsg {
+  type: 'session.revert.listSteps';
+  sessionId: string;
+}
+
+export interface SessionRevertPreviewMsg {
+  type: 'session.revert.preview';
+  sessionId: string;
+  /** 取 RevertStepInfo.revertTargetNodeId */
+  targetNodeId: string;
+  [k: string]: unknown;
+}
+
+export interface SessionRevertExecuteMsg {
+  type: 'session.revert.execute';
+  sessionId: string;
+  /** 取 RevertStepInfo.revertTargetNodeId */
+  targetNodeId: string;
+  force?: boolean;
+  skipFileUndo?: boolean;
+  [k: string]: unknown;
+}
+
+/** forkFromStep — 创建分叉会话而不动原会话, 最安全的回撤方式 */
+export interface SessionRevertForkMsg {
+  type: 'session.revert.fork';
+  sessionId: string;
+  /** 取 RevertStepInfo.forkTargetNodeId */
+  targetNodeId: string;
+  [k: string]: unknown;
+}
+
 export type ClientMessage =
   | PairRequest
   | AuthHello
@@ -350,7 +387,11 @@ export type ClientMessage =
   | GitPullRequest
   | AccountQuotaRequest
   | DevinSessionListRequest
-  | SessionLoadMsg;
+  | SessionLoadMsg
+  | SessionRevertListStepsMsg
+  | SessionRevertPreviewMsg
+  | SessionRevertExecuteMsg
+  | SessionRevertForkMsg;
 
 // ---------- server → client ----------
 
@@ -653,6 +694,44 @@ export interface DeviceDeletedMsg {
   deviceId: string;
 }
 
+// ---------- revert 响应 ----------
+// result/preview 字段直接承载 agent 原始响应 (宽松建模见 acp-types Revert*Response)
+
+export interface SessionRevertStepsMsg {
+  type: 'session.revert.steps';
+  sessionId: string;
+  /** agent 原始响应中的 steps 数组 (RevertStepInfo[]); agent 未返回时为 null */
+  steps: unknown[] | null;
+  /** agent 完整原始响应, 便于调试 schema 偏差 */
+  raw: unknown;
+}
+
+export interface SessionRevertPreviewResultMsg {
+  type: 'session.revert.previewResult';
+  sessionId: string;
+  targetNodeId: string;
+  /** agent 原始 RevertPreviewResponse: fileActions/irreversibleWarnings/conflicts */
+  preview: unknown;
+}
+
+export interface SessionRevertResultMsg {
+  type: 'session.revert.result';
+  sessionId: string;
+  targetNodeId: string;
+  /** agent 原始 RevertExecuteResponse: outcomes (+ 可能的 forkedSessionId) */
+  result: unknown;
+}
+
+export interface SessionRevertForkedMsg {
+  type: 'session.revert.forked';
+  sessionId: string;
+  targetNodeId: string;
+  /** 新分叉会话 id (提取自 agent 响应, 可能缺失) */
+  forkedSessionId?: string;
+  /** agent 原始 RevertForkFromStepResponse */
+  raw: unknown;
+}
+
 export interface ErrorMsg {
   type: 'error';
   code: string;
@@ -694,6 +773,10 @@ export type ServerMessage =
   | GitDiffMsg
   | GitResultMsg
   | AccountQuotaMsg
+  | SessionRevertStepsMsg
+  | SessionRevertPreviewResultMsg
+  | SessionRevertResultMsg
+  | SessionRevertForkedMsg
   | ErrorMsg
   | PongMsg;
 

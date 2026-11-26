@@ -4,6 +4,7 @@ import type { SessionManager } from '../acp/runtime.js';
 import type { Store } from '../store/db.js';
 import { PairingService, verifySignature, newNonce, deviceUsable } from '../auth/pairing.js';
 import type { ClientMessage, ServerMessage, SessionEvent, PendingPermission } from '@devin-remote/protocol';
+import { REVERT_METHODS } from '@devin-remote/acp-types';
 import type { ServerConfig } from '../config.js';
 import { writeWorkdirsToConfigFile } from '../config.js';
 import { validateNewWorkdir } from '../fs/fsOps.js';
@@ -55,6 +56,13 @@ function pathIdentity(p: string): string {
   let out = resolve(p);
   try { out = realpathSync(out); } catch { /* 不存在的路径仍可按规范化路径比较 */ }
   return process.platform === 'win32' ? out.toLowerCase() : out;
+}
+
+/** revert 宽松透传: client 消息除 type 外所有字段原样进 JSON-RPC params (私有 schema 未公开, 不裁剪不校验) */
+function revertPassthroughParams(msg: object): Record<string, unknown> {
+  const rest = { ...(msg as Record<string, unknown>) };
+  delete rest.type;
+  return rest;
 }
 
 export class Gateway {
@@ -160,6 +168,23 @@ export class Gateway {
     });
   }
 
+  /**
+   * revert 错误结构化映射 — agent 错误文本原样透传进 message (便于调试私有 schema 偏差),
+   *  code 按场景归类便于 client 分支处理:
+   *   - revert_not_supported: agent 不支持 (二进制内嵌 "Revert is not supported by this agent" / -32601 method_not_found)
+   *   - revert_timeout:       agent 超时未响应
+   *   - agent_unavailable:    acp 进程/连接不可用
+   *   - revert_failed:        其他 (含 agent 业务错误, 如 "Cannot revert to step ..." / 会话重载失败)
+   */
+  private sendRevertError(ws: WebSocket, err: unknown, ref?: string): void {
+    const message = String((err as Error)?.message ?? err);
+    const code = /not supported|-32601|method.not.found/i.test(message) ? 'revert_not_supported'
+      : /timeout/i.test(message) ? 'revert_timeout'
+      : /agent 进程不可用|agent process exited|connection closed/i.test(message) ? 'agent_unavailable'
+      : 'revert_failed';
+    this.send(ws, { type: 'error', code, message, ref });
+  }
+
   private workdirListMsg(): ServerMessage {
     return {
       type: 'workdir.list',
@@ -242,10 +267,14 @@ export class Gateway {
         state.subscriptions.add(msg.sessionId);
         const sinceSeq = msg.sinceSeq ?? 0;
         const all = this.store.eventsSince(msg.sessionId, sinceSeq);
-        // 全量快照(sinceSeq=0)限量最近 400 条防爆 WS; 增量补拉不截断 — 截断会造成中间 seq 永久丢失
+        // 全量快照(sinceSeq=0)限量最近 N 条防爆 WS; 增量补拉不截断 — 截断会造成中间 seq 永久丢失
+        // client 可用 limit 调小首屏 (如 mobile 一屏); 默认/上限 400, 非有限数值回退默认
         const SNAP_LIMIT = 400;
-        const truncated = sinceSeq <= 0 && all.length > SNAP_LIMIT;
-        const events = (truncated ? all.slice(-SNAP_LIMIT) : all).map(sanitizeEventForSnapshot);
+        const snapLimit = typeof msg.limit === 'number' && Number.isFinite(msg.limit)
+          ? Math.min(Math.max(Math.floor(msg.limit), 1), SNAP_LIMIT)
+          : SNAP_LIMIT;
+        const truncated = sinceSeq <= 0 && all.length > snapLimit;
+        const events = (truncated ? all.slice(-snapLimit) : all).map(sanitizeEventForSnapshot);
         this.send(ws, {
           type: 'session.snapshot',
           sessionId: msg.sessionId,
@@ -356,6 +385,80 @@ export class Gateway {
           await rt.setConfig(msg.configId, msg.value);
         } catch (e) {
           this.send(ws, { type: 'error', code: 'config_failed', message: String((e as Error).message) });
+        }
+        break;
+      }
+
+      // ---------- revert: devin 私有 ACP 方法转发 (宽松透传, 见 acp-types Revert* 类型) ----------
+
+      case 'session.revert.listSteps': {
+        const rt = this.mgr.get(msg.sessionId);
+        if (!rt) return this.send(ws, { type: 'error', code: 'no_session', message: '会话不存在' });
+        try {
+          const raw = await rt.revertRpc(REVERT_METHODS.listSteps, revertPassthroughParams(msg));
+          const steps = (raw as { steps?: unknown[] } | null)?.steps;
+          this.send(ws, {
+            type: 'session.revert.steps',
+            sessionId: msg.sessionId,
+            steps: Array.isArray(steps) ? steps : null,
+            raw,
+          });
+        } catch (e) {
+          this.sendRevertError(ws, e, msg.sessionId);
+        }
+        break;
+      }
+
+      case 'session.revert.preview': {
+        const rt = this.mgr.get(msg.sessionId);
+        if (!rt) return this.send(ws, { type: 'error', code: 'no_session', message: '会话不存在' });
+        try {
+          const preview = await rt.revertRpc(REVERT_METHODS.preview, revertPassthroughParams(msg));
+          this.send(ws, {
+            type: 'session.revert.previewResult',
+            sessionId: msg.sessionId,
+            targetNodeId: msg.targetNodeId,
+            preview,
+          });
+        } catch (e) {
+          this.sendRevertError(ws, e, msg.sessionId);
+        }
+        break;
+      }
+
+      case 'session.revert.execute': {
+        const rt = this.mgr.get(msg.sessionId);
+        if (!rt) return this.send(ws, { type: 'error', code: 'no_session', message: '会话不存在' });
+        try {
+          // execute 涉及文件回滚 + 对话重建, 超时放宽到 60s
+          const result = await rt.revertRpc(REVERT_METHODS.execute, revertPassthroughParams(msg), 60000);
+          this.send(ws, {
+            type: 'session.revert.result',
+            sessionId: msg.sessionId,
+            targetNodeId: msg.targetNodeId,
+            result,
+          });
+        } catch (e) {
+          this.sendRevertError(ws, e, msg.sessionId);
+        }
+        break;
+      }
+
+      case 'session.revert.fork': {
+        const rt = this.mgr.get(msg.sessionId);
+        if (!rt) return this.send(ws, { type: 'error', code: 'no_session', message: '会话不存在' });
+        try {
+          const raw = await rt.revertRpc(REVERT_METHODS.forkFromStep, revertPassthroughParams(msg), 60000);
+          const forkedSessionId = (raw as { forkedSessionId?: unknown } | null)?.forkedSessionId;
+          this.send(ws, {
+            type: 'session.revert.forked',
+            sessionId: msg.sessionId,
+            targetNodeId: msg.targetNodeId,
+            forkedSessionId: typeof forkedSessionId === 'string' ? forkedSessionId : undefined,
+            raw,
+          });
+        } catch (e) {
+          this.sendRevertError(ws, e, msg.sessionId);
         }
         break;
       }

@@ -391,3 +391,113 @@ export const COGNITION_METHODS = [
   '_cognition.ai/agent_stopped',
   '_cognition.ai/mcp/serversChanged',
 ] as const;
+
+// ---------- devin 私有 revert 方法 (cognition.ai/revert/*) ----------
+// 私有协议无公开 schema — 按 devin.exe 二进制 serde 结构侦察宽松建模:
+//   struct RevertStepInfo with 8 elements: stepNumber/kind/userMessageId/toolCallId/
+//     questionNodeId/revertTargetNodeId/forkTargetNodeId/summary
+//   struct RevertPreviewResponse with 3 elements: fileActions/irreversibleWarnings/conflicts
+//   struct RevertExecuteResponse with 2 elements: forkedSessionId/outcomes
+//   struct RevertForkFromStepResponse / RevertResumeResponse with 1 element
+// 未知字段一律索引签名兜底, server 做宽松透传不做严格校验
+
+export interface RevertStepInfo {
+  stepNumber?: number;
+  /** prompt | questionAnswer (RevertStepKind) */
+  kind?: string;
+  userMessageId?: string;
+  toolCallId?: string;
+  questionNodeId?: string;
+  /** execute/preview 用的目标节点 id */
+  revertTargetNodeId?: string;
+  /** forkFromStep 用的目标节点 id */
+  forkTargetNodeId?: string;
+  summary?: string;
+  [k: string]: unknown;
+}
+
+export interface RevertListStepsParams {
+  sessionId: string;
+  [k: string]: unknown;
+}
+
+export interface RevertListStepsResponse {
+  steps?: RevertStepInfo[];
+  [k: string]: unknown;
+}
+
+/** preview/execute/forkFromStep 共用参数形态 — client 额外字段原样透传 */
+export interface RevertTargetParams {
+  sessionId: string;
+  targetNodeId: string;
+  /** execute 专有: 跳过确认强制回撤 */
+  force?: boolean;
+  /** execute 专有: 不回滚文件改动只回滚对话 */
+  skipFileUndo?: boolean;
+  [k: string]: unknown;
+}
+
+/** FileRevertKindPayload: internally tagged enum — type: restore/delete/recreate */
+export interface FileRevertActionPayload {
+  path?: string;
+  type?: 'restore' | 'delete' | 'recreate' | string;
+  diffStats?: unknown;
+  currentContent?: string;
+  /** restore 变体专有 */
+  originalContent?: string;
+  [k: string]: unknown;
+}
+
+export interface IrreversibleWarningPayload {
+  toolName?: string;
+  description?: string;
+  [k: string]: unknown;
+}
+
+export interface RevertPreviewResponse {
+  fileActions?: FileRevertActionPayload[];
+  irreversibleWarnings?: IrreversibleWarningPayload[];
+  conflicts?: unknown[];
+  [k: string]: unknown;
+}
+
+/** RevertUndoOutcomePayload: internally tagged enum — type: success/skipped/failed */
+export interface RevertUndoOutcomePayload {
+  type?: 'success' | 'skipped' | 'failed' | string;
+  path?: string;
+  [k: string]: unknown;
+}
+
+export interface RevertExecuteResponse {
+  forkedSessionId?: string;
+  outcomes?: RevertUndoOutcomePayload[];
+  [k: string]: unknown;
+}
+
+export interface RevertForkFromStepResponse {
+  forkedSessionId?: string;
+  [k: string]: unknown;
+}
+
+export interface RevertResumeParams {
+  sessionId: string;
+  targetNodeId?: string;
+  [k: string]: unknown;
+}
+
+export interface RevertResumeResponse {
+  stopReason?: string;
+  [k: string]: unknown;
+}
+
+/** 私有方法名常量 — 注意无下划线前缀 (与 _cognition.ai/* 通知不同) */
+export const REVERT_METHODS = {
+  listSteps: 'cognition.ai/revert/listSteps',
+  preview: 'cognition.ai/revert/preview',
+  execute: 'cognition.ai/revert/execute',
+  forkFromStep: 'cognition.ai/revert/forkFromStep',
+  resume: 'cognition.ai/revert/resume',
+} as const;
+
+/** agent capabilities _meta 中宣告 revert 支持的 key (best-effort 检测用) */
+export const REVERT_SUPPORT_META_KEY = 'cognition.ai/revert';

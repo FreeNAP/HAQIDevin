@@ -220,6 +220,23 @@ export class SessionRuntime {
     return r;
   }
 
+  // ---------- revert (devin 私有方法宽松透传) ----------
+
+  /**
+   * cognition.ai/revert/* 透传通道 — 私有协议无公开 schema:
+   *  params 原样进 JSON-RPC, server 不裁剪不校验; agent 的错误响应原样抛出,
+   *  由 gateway 映射为结构化 error 转发给 client。
+   *  acp 侧未加载时先 reload (与 runPrompt 同一幂等机制)。
+   */
+  async revertRpc<T = unknown>(method: string, params: Record<string, unknown>, timeoutMs = 30000): Promise<T> {
+    if (!this.acpLoaded) {
+      await this.mgr.loadDevinSession(this.sessionId, this.meta.cwd, this.meta.additionalDirectories);
+    }
+    const conn = this.mgr.agent.connection;
+    if (!conn || conn.isClosed()) throw new Error('agent 进程不可用');
+    return conn.request<T>(method, params, timeoutMs);
+  }
+
   // ---------- 权限裁决 ----------
 
   handlePermissionRequest(msg: JsonRpcRequest): void {
