@@ -24,6 +24,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams, router } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
 import { colors } from '../../src/theme/colors';
 import { T, M } from '../../src/components/ui';
 import { useChatStore } from '../../src/store/chat';
@@ -40,6 +41,7 @@ import {
 } from '../../src/components/chat-items';
 import { PermissionCard } from '../../src/components/PermissionCard';
 import { Composer, ComposerHandle } from '../../src/components/Composer';
+import { ideColors } from '../../src/components/ide-tool-cards';
 import { ConfigPickerModal } from '../../src/components/ConfigPickerModal';
 import { FileExplorerSidebar } from '../../src/components/FileExplorerSidebar';
 import { initChatState, ChatItem } from '../../src/reducers/chatReducer';
@@ -182,6 +184,7 @@ function renderItem(
   item: ChatItem,
   streamingAgentId: string | null,
   onMessageLongPress: (item: ChatItem) => void,
+  sessionCwd: string,
 ) {
   switch (item.kind) {
     case 'user':
@@ -191,7 +194,7 @@ function renderItem(
     case 'thought':
       return <ThoughtCard item={item} />;
     case 'tool':
-      return <ToolCallCard item={item} />;
+      return <ToolCallCard item={item} cwd={sessionCwd} />;
     case 'plan':
       return <PlanCard item={item} />;
     case 'notice':
@@ -592,38 +595,39 @@ export default function ChatPage() {
     // app.json softwareKeyboardLayoutMode=pan 让系统平移窗口, Expo Go 的 adjustResize 直接压缩布局,
     // 两种模式下 composer 均不被遮挡; JS 侧再做 height 补偿会造成双重上移
     <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.paper }}
+      style={{ flex: 1, backgroundColor: '#111114' }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={0}
     >
+      <StatusBar style="light" />
       <View style={[styles.page, { paddingTop: insets.top }]}>
         {/* 顶栏 */}
         <View style={styles.chatBar}>
           <Pressable onPress={() => router.back()} hitSlop={12} style={styles.backBtn}>
-            <T size={21} weight="regular" color={colors.ink}>‹</T>
+            <T size={21} weight="regular" color={ideColors.text}>‹</T>
           </Pressable>
           <View style={styles.chatBarMain}>
-            <T size={13} weight="bold" ls={-0.1} numberOfLines={1}>
+            <T size={13} weight="bold" ls={-0.1} numberOfLines={1} color={ideColors.text}>
               {title}
             </T>
             <View style={styles.pillsRow}>
               {modeName && (
                 <Pressable onPress={() => setPickerTarget('mode')} style={styles.pill}>
-                  <M size={8.5} color={colors.ink} uppercase ls={0.4}>{modeName}</M>
+                  <M size={8.5} color={ideColors.text} uppercase ls={0.4}>{modeName}</M>
                 </Pressable>
               )}
               {modelName && (
                 <Pressable onPress={() => setPickerTarget('model')} style={styles.pill}>
-                  <M size={8.5} color={colors.ink} uppercase ls={0.4}>{modelName}</M>
+                  <M size={8.5} color={ideColors.text} uppercase ls={0.4}>{modelName}</M>
                 </Pressable>
               )}
               {!modeName && !modelName && (
-                <M size={8.5} color={colors.ink3}>…</M>
+                <M size={8.5} color={ideColors.faint}>…</M>
               )}
             </View>
           </View>
           {usageText && (
-            <M size={9} color={colors.ink3} style={{ marginLeft: 6 }}>
+            <M size={9} color={ideColors.faint} style={{ marginLeft: 6 }}>
               {usageText}
             </M>
           )}
@@ -635,10 +639,10 @@ export default function ChatPage() {
             }}
             hitSlop={10}
             disabled={state.items.length === 0}
-            style={[styles.explorerBtn, timelineOpen && { backgroundColor: colors.ink }, state.items.length === 0 && { opacity: 0.3 }]}
+            style={[styles.explorerBtn, timelineOpen && { backgroundColor: ideColors.blue }, state.items.length === 0 && { opacity: 0.3 }]}
             accessibilityLabel="打开时间线"
           >
-            <M size={10.5} weight="bold" color={timelineOpen ? colors.paper : colors.ink}>时</M>
+            <M size={10.5} weight="bold" color={timelineOpen ? '#fff' : ideColors.text}>时</M>
           </Pressable>
           {/* 资源管理器入口 — 有 cwd 才可用 (快照未到时禁用) */}
           <Pressable
@@ -648,18 +652,18 @@ export default function ChatPage() {
               setExplorerOpen(true);
             }}
             hitSlop={10}
-            style={[styles.explorerBtn, explorerOpen && { backgroundColor: colors.ink }, !cwd && { opacity: 0.3 }]}
+            style={[styles.explorerBtn, explorerOpen && { backgroundColor: ideColors.blue }, !cwd && { opacity: 0.3 }]}
             accessibilityLabel="打开文件面板"
           >
-            <M size={12} weight="bold" color={explorerOpen ? colors.paper : colors.ink}>▤</M>
+            <M size={12} weight="bold" color={explorerOpen ? '#fff' : ideColors.text}>▤</M>
           </Pressable>
-          <View style={[styles.statusDot, { backgroundColor: running ? colors.acc : colors.ink3 }]} />
+          <View style={[styles.statusDot, { backgroundColor: running ? colors.acc : ideColors.faint }]} />
         </View>
 
         {/* 历史截断提示 */}
         {truncatedText && (
           <View style={styles.truncatedBar}>
-            <T size={10.5} color={colors.ink2}>
+            <T size={10.5} color={ideColors.dim}>
               {truncatedText}
             </T>
           </View>
@@ -678,7 +682,7 @@ export default function ChatPage() {
         {timelineJumping && (
           <View style={styles.jumpBar}>
             <ActivityIndicator size="small" color={colors.acc} />
-            <T size={10.5} weight="semibold" color={colors.ink2} style={{ marginLeft: 7 }}>
+            <T size={10.5} weight="semibold" color={ideColors.dim} style={{ marginLeft: 7 }}>
               正在回溯历史并定位…
             </T>
           </View>
@@ -688,7 +692,7 @@ export default function ChatPage() {
         {forking && (
           <View style={styles.jumpBar}>
             <ActivityIndicator size="small" color={colors.acc} />
-            <T size={10.5} weight="semibold" color={colors.ink2} style={{ marginLeft: 7 }}>
+            <T size={10.5} weight="semibold" color={ideColors.dim} style={{ marginLeft: 7 }}>
               正在创建新会话并复制上下文…
             </T>
           </View>
@@ -704,7 +708,7 @@ export default function ChatPage() {
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
             <View style={item.id === highlightItemId ? styles.highlightWrap : undefined}>
-              {renderItem(item, streamingAgentId, onMessageLongPress)}
+              {renderItem(item, streamingAgentId, onMessageLongPress, cwd)}
             </View>
           )}
           onEndReached={onEndReached}
@@ -716,7 +720,7 @@ export default function ChatPage() {
                 {historyLoading ? (
                   <View style={styles.historyLoadingRow}>
                     <ActivityIndicator size="small" color={colors.acc} />
-                    <M size={9.5} color={colors.ink3} style={{ marginLeft: 7 }}>
+                    <M size={9.5} color={ideColors.faint} style={{ marginLeft: 7 }}>
                       正在加载更早历史…
                     </M>
                   </View>
@@ -725,16 +729,16 @@ export default function ChatPage() {
                     <M size={9.5} weight="bold" color={colors.acc} style={{ textAlign: 'center' }}>
                       历史加载失败 — 点击重试
                     </M>
-                    <M size={8.5} color={colors.ink3} numberOfLines={1} style={{ marginTop: 3, textAlign: 'center' }}>
+                    <M size={8.5} color={ideColors.faint} numberOfLines={1} style={{ marginTop: 3, textAlign: 'center' }}>
                       {historyError}
                     </M>
                   </Pressable>
                 ) : state.truncated ? (
-                  <M size={9.5} color={colors.ink3}>
+                  <M size={9.5} color={ideColors.faint}>
                     继续上翻加载更早历史
                   </M>
                 ) : (
-                  <M size={9.5} color={colors.ink3}>
+                  <M size={9.5} color={ideColors.faint}>
                     — 已到会话开头 —
                   </M>
                 )}
@@ -745,7 +749,7 @@ export default function ChatPage() {
             <View style={styles.emptyWrap}>
               {/* inverted 列表里这个组件是上下翻转的, 用 transform 翻回来 */}
               <View style={{ transform: [{ scaleY: -1 }] }}>
-                <T size={11.5} color={colors.ink3} style={{ textAlign: 'center' }}>
+                <T size={11.5} color={ideColors.faint} style={{ textAlign: 'center' }}>
                   {phase === 'authed' ? '加载会话历史…' : '等待连接…'}
                 </T>
               </View>
@@ -757,7 +761,7 @@ export default function ChatPage() {
         {/* 他端处理通告 */}
         {resolvedFlash && !firstPending && (
           <View style={styles.resolvedBar}>
-            <T size={10.5} weight="semibold" color={colors.ink2}>
+            <T size={10.5} weight="semibold" color={ideColors.dim}>
               权限请求已由 {resolvedFlash.byDevice} 处理
             </T>
           </View>
@@ -766,7 +770,7 @@ export default function ChatPage() {
         {/* 复制成功轻提示 */}
         {copyFlash && (
           <View style={styles.resolvedBar}>
-            <T size={10.5} weight="semibold" color={colors.ink2}>
+            <T size={10.5} weight="semibold" color={ideColors.dim}>
               已复制到剪贴板
             </T>
           </View>
@@ -790,7 +794,7 @@ export default function ChatPage() {
           onSend={onSend}
           onCancel={() => client.cancel(sessionId)}
         />
-        <View style={{ height: Math.max(insets.bottom - 6, 0), backgroundColor: colors.paper }} />
+        <View style={{ height: Math.max(insets.bottom - 6, 0), backgroundColor: '#111114' }} />
 
         {/* 资源管理器侧边栏 — 引用把 @相对路径 插入输入框并收起面板聚焦输入 */}
         <FileExplorerSidebar
@@ -830,15 +834,15 @@ export default function ChatPage() {
             {messageAction && (
               <Pressable onPress={(e) => e.stopPropagation()} style={styles.menuSheet}>
                 <View style={styles.menuHead}>
-                  <M size={10.5} weight="bold">
+                  <M size={10.5} weight="bold" color={ideColors.text}>
                     {messageAction.title}
                   </M>
-                  <T size={11} color={colors.ink2} numberOfLines={4} style={{ marginTop: 7 }}>
+                  <T size={11} color={ideColors.dim} numberOfLines={4} style={{ marginTop: 7 }}>
                     {messageAction.text}
                   </T>
                 </View>
-                <Pressable onPress={copyMessageAction} style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: colors.paper2 }]}>
-                  <T size={12} weight="medium" color={colors.ink}>
+                <Pressable onPress={copyMessageAction} style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: ideColors.card2 }]}>
+                  <T size={12} weight="medium" color={ideColors.text}>
                     复制文本
                   </T>
                 </Pressable>
@@ -846,18 +850,18 @@ export default function ChatPage() {
                   <Pressable
                     onPress={() => void reaskFromMessage(messageAction)}
                     disabled={forking}
-                    style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: colors.paper2 }, forking && { opacity: 0.45 }]}
+                    style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: ideColors.card2 }, forking && { opacity: 0.45 }]}
                   >
-                    <T size={12} weight="medium" color={colors.ink}>
+                    <T size={12} weight="medium" color={ideColors.text}>
                       从此处重新提问（新会话）
                     </T>
-                    <M size={8.5} color={colors.ink3} style={{ marginTop: 3 }}>
+                    <M size={8.5} color={ideColors.faint} style={{ marginTop: 3 }}>
                       复制此前文本上下文; 不改动原会话与文件
                     </M>
                   </Pressable>
                 )}
-                <Pressable onPress={() => setMessageAction(null)} style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: colors.paper2 }]}>
-                  <T size={12} color={colors.ink3} style={{ textAlign: 'center' }}>
+                <Pressable onPress={() => setMessageAction(null)} style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: ideColors.card2 }]}>
+                  <T size={12} color={ideColors.faint} style={{ textAlign: 'center' }}>
                     取消
                   </T>
                 </Pressable>
@@ -871,16 +875,16 @@ export default function ChatPage() {
           <Pressable style={styles.menuBackdrop} onPress={() => setTimelineOpen(false)}>
             <Pressable onPress={(e) => e.stopPropagation()} style={styles.timelineSheet}>
               <View style={styles.menuHead}>
-                <M size={10.5} weight="bold" uppercase ls={0.8}>
+                <M size={10.5} weight="bold" uppercase ls={0.8} color={ideColors.text}>
                   时间线定位
                 </M>
-                <M size={8.5} color={colors.ink3} style={{ marginTop: 4 }}>
+                <M size={8.5} color={ideColors.faint} style={{ marginTop: 4 }}>
                   {oldestLoadedTs && newestLoadedTs
                     ? `已加载 ${formatDate(oldestLoadedTs)} ${formatTime(oldestLoadedTs)} — ${formatDate(newestLoadedTs)} ${formatTime(newestLoadedTs)}`
                     : '暂无可定位消息'}
                 </M>
                 {state.truncated && (
-                  <M size={8.5} color={colors.warn} style={{ marginTop: 3 }}>
+                  <M size={8.5} color={ideColors.yellow} style={{ marginTop: 3 }}>
                     更早历史尚未加载, 选择时间点会自动回溯
                   </M>
                 )}
@@ -905,9 +909,9 @@ export default function ChatPage() {
                         void jumpToTimestamp(action.ts);
                       }
                     }}
-                    style={({ pressed }) => [styles.quickBtn, pressed && { backgroundColor: colors.paper2 }]}
+                    style={({ pressed }) => [styles.quickBtn, pressed && { backgroundColor: ideColors.card2 }]}
                   >
-                    <M size={9.5} weight="bold" color={colors.ink}>
+                    <M size={9.5} weight="bold" color={ideColors.text}>
                       {action.label}
                     </M>
                   </Pressable>
@@ -916,7 +920,7 @@ export default function ChatPage() {
 
               <ScrollView style={styles.timelineList} keyboardShouldPersistTaps="handled">
                 {timelineBuckets.length === 0 ? (
-                  <M size={9.5} color={colors.ink3} style={{ textAlign: 'center', paddingVertical: 18 }}>
+                  <M size={9.5} color={ideColors.faint} style={{ textAlign: 'center', paddingVertical: 18 }}>
                     暂无日期锚点
                   </M>
                 ) : (
@@ -924,17 +928,17 @@ export default function ChatPage() {
                     <Pressable
                       key={bucket.key}
                       onPress={() => void jumpToTimestamp(bucket.firstTs)}
-                      style={({ pressed }) => [styles.timelineRow, pressed && { backgroundColor: colors.paper2 }]}
+                      style={({ pressed }) => [styles.timelineRow, pressed && { backgroundColor: ideColors.card2 }]}
                     >
                       <View style={{ flex: 1, minWidth: 0 }}>
-                        <T size={12} weight="semibold" color={colors.ink}>
+                        <T size={12} weight="semibold" color={ideColors.text}>
                           {formatDate(bucket.startTs)}
                         </T>
-                        <M size={8.5} color={colors.ink3} style={{ marginTop: 2 }}>
+                        <M size={8.5} color={ideColors.faint} style={{ marginTop: 2 }}>
                           {formatTime(bucket.firstTs)} — {formatTime(bucket.lastTs)}
                         </M>
                       </View>
-                      <M size={9} color={colors.ink3}>
+                      <M size={9} color={ideColors.faint}>
                         {bucket.count} 项
                       </M>
                     </Pressable>
@@ -942,8 +946,8 @@ export default function ChatPage() {
                 )}
               </ScrollView>
 
-              <Pressable onPress={() => setTimelineOpen(false)} style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: colors.paper2 }]}>
-                <T size={12} color={colors.ink3} style={{ textAlign: 'center' }}>
+              <Pressable onPress={() => setTimelineOpen(false)} style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: ideColors.card2 }]}>
+                <T size={12} color={ideColors.faint} style={{ textAlign: 'center' }}>
                   关闭
                 </T>
               </Pressable>
@@ -956,23 +960,24 @@ export default function ChatPage() {
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: colors.paper },
+  page: { flex: 1, backgroundColor: '#111114' },
   chatBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    backgroundColor: '#141418',
     paddingHorizontal: 12,
     paddingTop: 10,
     paddingBottom: 10,
     borderBottomWidth: 2,
-    borderBottomColor: colors.ink,
+    borderBottomColor: ideColors.border,
   },
   backBtn: { paddingHorizontal: 2 },
   chatBarMain: { flex: 1, minWidth: 0 },
   pillsRow: { flexDirection: 'row', gap: 4, marginTop: 4 },
   pill: {
     borderWidth: 1,
-    borderColor: colors.ink,
+    borderColor: ideColors.border,
     paddingHorizontal: 5,
     paddingVertical: 2,
   },
@@ -983,20 +988,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1.5,
-    borderColor: colors.ink,
+    borderColor: ideColors.border,
     marginLeft: 6,
   },
   offlineBar: {
     backgroundColor: colors.accSoft,
     borderBottomWidth: 1,
-    borderBottomColor: colors.hairline,
+    borderBottomColor: ideColors.borderSoft,
     paddingVertical: 7,
     alignItems: 'center',
   },
   truncatedBar: {
-    backgroundColor: colors.paper2,
+    backgroundColor: ideColors.card2,
     borderBottomWidth: 1,
-    borderBottomColor: colors.hairline,
+    borderBottomColor: ideColors.borderSoft,
     paddingVertical: 7,
     alignItems: 'center',
   },
@@ -1006,7 +1011,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.accSoft,
     borderBottomWidth: 1,
-    borderBottomColor: colors.hairline,
+    borderBottomColor: ideColors.borderSoft,
     paddingVertical: 7,
   },
   flowContent: { paddingHorizontal: 12, paddingVertical: 12 },
@@ -1027,26 +1032,26 @@ const styles = StyleSheet.create({
   },
   resolvedBar: {
     borderTopWidth: 1,
-    borderTopColor: colors.hairline,
-    backgroundColor: colors.paper2,
+    borderTopColor: ideColors.borderSoft,
+    backgroundColor: ideColors.card2,
     paddingVertical: 7,
     alignItems: 'center',
   },
   menuBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(17,19,17,0.35)',
+    backgroundColor: 'rgba(0,0,0,0.58)',
     justifyContent: 'flex-end',
   },
   menuSheet: {
-    backgroundColor: colors.card,
+    backgroundColor: ideColors.shell,
     borderTopWidth: 2,
-    borderTopColor: colors.ink,
+    borderTopColor: ideColors.border,
     paddingBottom: 10,
   },
   timelineSheet: {
-    backgroundColor: colors.card,
+    backgroundColor: ideColors.shell,
     borderTopWidth: 2,
-    borderTopColor: colors.ink,
+    borderTopColor: ideColors.border,
     paddingBottom: 10,
     maxHeight: '78%',
   },
@@ -1054,13 +1059,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: colors.ink,
+    borderBottomColor: ideColors.border,
   },
   menuRow: {
     paddingHorizontal: 14,
     paddingVertical: 11,
     borderBottomWidth: 1,
-    borderBottomColor: colors.hairline,
+    borderBottomColor: ideColors.borderSoft,
   },
   quickGrid: {
     flexDirection: 'row',
@@ -1069,14 +1074,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 11,
     borderBottomWidth: 1,
-    borderBottomColor: colors.hairline,
+    borderBottomColor: ideColors.borderSoft,
   },
   quickBtn: {
     borderWidth: 1.5,
-    borderColor: colors.ink,
+    borderColor: ideColors.border,
     paddingHorizontal: 9,
     paddingVertical: 6,
-    backgroundColor: colors.card,
+    backgroundColor: ideColors.card,
   },
   timelineList: { maxHeight: 310 },
   timelineRow: {
@@ -1086,6 +1091,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: colors.hairline,
+    borderBottomColor: ideColors.borderSoft,
   },
 });

@@ -52,7 +52,18 @@ export interface ThoughtItem {
   id: string;
   seq: number;
   ts: number;
+  /** 最后一个 thought chunk 的事件时间; ts→endTs 作为思考耗时近似值 */
+  endTs?: number;
   text: string;
+}
+
+export interface ToolDiffData {
+  path: string;
+  oldText?: string;
+  newText: string;
+  linesAdded: number;
+  linesRemoved: number;
+  fileDeleted: boolean;
 }
 
 export interface ToolItem {
@@ -65,12 +76,25 @@ export interface ToolItem {
   name: string;
   title?: string;
   toolKind?: string;
+  inferenceName?: string;
   status: string;
   paths: string[];
   diffAdd: number;
   diffDel: number;
   hasDiff: boolean;
   detail?: string;
+  /** execute/bash 类工具的命令全文与输出 (输出优先 rawOutput, 其次 content text) */
+  command?: string;
+  inputPreview?: string;
+  output?: string;
+  cwd?: string;
+  diffs: ToolDiffData[];
+  /** cognition.ai/timestamp 解析出的毫秒时间; 用于 IDE 风格 Worked for Xs */
+  startedAtMs?: number;
+  finishedAtMs?: number;
+  durationMs?: number;
+  exitCode?: number | null;
+  exitSignal?: string | number | null;
 }
 
 export interface PlanItem {
@@ -181,40 +205,167 @@ function asAcpUpdate(payload: unknown): AcpUpdatePayload | null {
   return null;
 }
 
-/** diff 摘要: 统计 newText / oldText 行数作为 +/- 估算 */
-function diffStats(content: ToolCallContent[] | undefined): { add: number; del: number; hasDiff: boolean; paths: string[] } {
-  let add = 0;
-  let del = 0;
-  let hasDiff = false;
-  const paths: string[] = [];
-  if (!Array.isArray(content)) return { add, del, hasDiff, paths };
+function fallbackLineCount(text: string): number {
+  if (!text) return 0;
+  const lines = text.split('\n');
+  return lines.length > 1 && lines[lines.length - 1] === '' ? lines.length - 1 : lines.length;
+}
+
+/** diff content → 渲染数据; +/- 统计优先使用 devin _meta, 缺失时才按文本行数兜底 */
+function extractDiffs(content: ToolCallContent[] | undefined): ToolDiffData[] {
+  if (!Array.isArray(content)) return [];
+  const out: ToolDiffData[] = [];
+  for (const c of content) {
+    if (!c || typeof c !== 'object' || c.type !== 'diff') continue;
+    if (typeof c.path !== 'string' || !c.path) continue;
+    const meta = asRecord(c._meta);
+    const newText = typeof c.newText === 'string' ? c.newText : '';
+    const oldText = typeof c.oldText === 'string' ? c.oldText : undefined;
+    const metaAdd = meta?.['cognition.ai/linesAdded'];
+    const metaDel = meta?.['cognition.ai/linesRemoved'];
+    out.push({
+      path: c.path,
+      oldText,
+      newText,
+      linesAdded: typeof metaAdd === 'number' ? metaAdd : fallbackLineCount(newText),
+      linesRemoved: typeof metaDel === 'number' ? metaDel : fallbackLineCount(oldText ?? ''),
+      fileDeleted: meta?.['cognition.ai/fileDeleted'] === true,
+    });
+  }
+  return out;
+}
+
+function diffStats(diffs: ToolDiffData[]): { add: number; del: number; hasDiff: boolean; paths: string[] } {
+  return {
+    add: diffs.reduce((n, d) => n + d.linesAdded, 0),
+    del: diffs.reduce((n, d) => n + d.linesRemoved, 0),
+    hasDiff: diffs.length > 0,
+    paths: diffs.map((d) => d.path),
+  };
+}
+
+/** content[] 中的文本输出原样拼接; 空白/换行对终端输出有意义, 不做 trim */
+function extractContentOutput(content: ToolCallContent[] | undefined): string | undefined {
+  if (!Array.isArray(content)) return undefined;
+  const parts: string[] = [];
   for (const c of content) {
     if (!c || typeof c !== 'object') continue;
-    if (c.type === 'diff') {
-      hasDiff = true;
-      if (typeof c.path === 'string' && c.path) paths.push(c.path);
-      const newLines = typeof c.newText === 'string' && c.newText.length > 0 ? c.newText.split('\n').length : 0;
-      const oldLines = typeof c.oldText === 'string' && c.oldText.length > 0 ? c.oldText.split('\n').length : 0;
-      add += newLines;
-      del += oldLines;
+    if (c.type === 'content' && c.content && typeof c.content.text === 'string' && c.content.text.length > 0) {
+      parts.push(c.content.text);
     }
   }
-  return { add, del, hasDiff, paths };
+  return parts.length > 0 ? parts.join('\n') : undefined;
 }
 
 function contentDetail(content: ToolCallContent[] | undefined): string | undefined {
+  const output = extractContentOutput(content);
+  if (output?.trim()) {
+    const firstLine = output.trim().split('\n')[0] ?? '';
+    return firstLine.length > 120 ? firstLine.slice(0, 117) + '…' : firstLine;
+  }
   if (!Array.isArray(content)) return undefined;
   for (const c of content) {
     if (!c || typeof c !== 'object') continue;
-    if (c.type === 'content' && c.content && typeof c.content.text === 'string' && c.content.text.trim()) {
-      const firstLine = c.content.text.trim().split('\n')[0] ?? '';
-      return firstLine.length > 120 ? firstLine.slice(0, 117) + '…' : firstLine;
-    }
     if (c.type === 'terminal' && typeof c.terminalId === 'string') {
       return `terminal ${c.terminalId}`;
     }
   }
   return undefined;
+}
+
+function clipPreview(text: string, max = 1000): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function rawInputRecord(rawInput: unknown): { record: Record<string, unknown> | null; plainText?: string } {
+  if (typeof rawInput === 'string') {
+    const trimmed = rawInput.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        const rec = asRecord(parsed);
+        if (rec) return { record: rec };
+      } catch {
+        // 非 JSON 字符串按命令原文处理
+      }
+    }
+    return { record: null, plainText: rawInput };
+  }
+  return { record: asRecord(rawInput), plainText: undefined };
+}
+
+function stringOrJoined(value: unknown): string | undefined {
+  if (typeof value === 'string' && value) return value;
+  if (Array.isArray(value) && value.every((x) => typeof x === 'string')) return (value as string[]).join(' ');
+  return undefined;
+}
+
+/** execute 命令全文 + 通用输入摘要; rawInput 在样本中通常是对象, 但兼容 JSON/纯文本字符串 */
+function rawInputInfo(rawInput: unknown): { command?: string; preview?: string; cwd?: string } {
+  const { record, plainText } = rawInputRecord(rawInput);
+  if (!record) {
+    return plainText ? { command: plainText, preview: clipPreview(plainText) } : {};
+  }
+  const cwd = stringOrJoined(record.cwd) ?? stringOrJoined(record.workDir);
+  for (const key of ['command', 'cmd']) {
+    const command = stringOrJoined(record[key]);
+    if (command) return { command, preview: clipPreview(command), cwd };
+  }
+  for (const key of ['file_path', 'filePath', 'path', 'query', 'url', 'pattern']) {
+    const value = stringOrJoined(record[key]);
+    if (value) return { preview: clipPreview(value), cwd };
+  }
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(record).slice(0, 8)) {
+    if (typeof value === 'string') parts.push(`${key}: ${clipPreview(value, 160)}`);
+    else if (typeof value === 'number' || typeof value === 'boolean') parts.push(`${key}: ${String(value)}`);
+  }
+  return parts.length > 0 ? { preview: clipPreview(parts.join('\n')), cwd } : { cwd };
+}
+
+/** rawOutput 形态在 devin 版本中不稳定: 字符串 / content block / {stdout,stderr} / 普通对象都尽量转文本 */
+function rawOutputText(value: unknown, depth = 0): string | undefined {
+  if (typeof value === 'string') return value.length > 0 ? value : undefined;
+  if (value == null || depth > 3) return undefined;
+  if (Array.isArray(value)) {
+    const parts = value.map((x) => rawOutputText(x, depth + 1)).filter((x): x is string => Boolean(x));
+    return parts.length > 0 ? parts.join('\n') : undefined;
+  }
+  const rec = asRecord(value);
+  if (!rec) return undefined;
+  const preferred: string[] = [];
+  for (const key of ['output', 'text', 'stdout', 'stderr', 'error', 'message']) {
+    const text = stringOrJoined(rec[key]);
+    if (text) preferred.push(text);
+  }
+  if (preferred.length > 0) return preferred.join('\n');
+  const nested = rawOutputText(rec.content, depth + 1) ?? rawOutputText(rec.result, depth + 1);
+  if (nested) return nested;
+  try {
+    return clipPreview(JSON.stringify(rec, null, 2), 4000);
+  } catch {
+    return undefined;
+  }
+}
+
+function cognitionTimestampMs(meta: unknown): number | undefined {
+  const rec = asRecord(meta);
+  const value = rec?.['cognition.ai/timestamp'];
+  if (typeof value !== 'string') return undefined;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function terminalExitMeta(meta: unknown): { exitCode?: number | null; exitSignal?: string | number | null } {
+  const rec = asRecord(meta);
+  const terminal = asRecord(rec?.terminal_exit);
+  if (!terminal) return {};
+  const code = terminal.exit_code;
+  const signal = terminal.signal;
+  return {
+    exitCode: typeof code === 'number' || code === null ? code : undefined,
+    exitSignal: typeof signal === 'string' || typeof signal === 'number' || signal === null ? signal : undefined,
+  };
 }
 
 // ---------- item 级操作 ----------
@@ -231,21 +382,43 @@ function appendChunk(items: ChatItem[], kind: 'agent' | 'thought' | 'user', text
   const last = items.length > 0 ? items[items.length - 1] : undefined;
   if (last && last.kind === kind) {
     const merged = { ...last, text: last.text + text } as ChatItem;
+    if (merged.kind === 'thought') merged.endTs = ts;
     return [...items.slice(0, -1), merged];
   }
   // 用首个 chunk 的 seq 生成确定性 id — 历史翻页全量重放后 key 不变, FlatList 不整列重挂载
   const item = { kind, id: `${kind}_seq_${seq}`, seq, ts, text } as ChatItem;
+  if (item.kind === 'thought') item.endTs = ts;
   return [...items, item];
 }
 
 interface ToolCallLike {
+  sessionUpdate?: string;
   toolCallId: string;
   title?: string;
   kind?: string;
   status?: string;
   content?: ToolCallContent[];
+  rawInput?: unknown;
+  rawOutput?: unknown;
   locations?: { path: string; line?: number }[];
   _meta?: { 'cognition.ai/inferenceToolName'?: string; [k: string]: unknown };
+}
+
+/** 同一路径的后续 diff 视为终态覆盖; 不同路径保留顺序, 支持一次工具调用修改多个文件 */
+function mergeDiffData(prev: ToolDiffData[], incoming: ToolDiffData[]): ToolDiffData[] {
+  if (incoming.length === 0) return prev;
+  if (prev.length === 0) return incoming;
+  const order: string[] = [];
+  const byPath = new Map<string, ToolDiffData>();
+  for (const d of prev) {
+    order.push(d.path);
+    byPath.set(d.path, d);
+  }
+  for (const d of incoming) {
+    if (!byPath.has(d.path)) order.push(d.path);
+    byPath.set(d.path, d);
+  }
+  return order.map((path) => byPath.get(path)!).filter(Boolean);
 }
 
 /** tool_call / tool_call_update → 按 toolCallId 合并 */
@@ -255,12 +428,27 @@ function upsertToolItem(items: ChatItem[], upd: ToolCallLike, seq: number, ts: n
 
   const inferenceName = upd._meta?.['cognition.ai/inferenceToolName'];
   const name = upd.kind ?? prev?.name ?? inferenceName ?? upd.title ?? 'tool';
-  const diff = diffStats(upd.content);
+  const input = rawInputInfo(upd.rawInput);
+  const diffs = mergeDiffData(prev?.diffs ?? [], extractDiffs(upd.content));
+  const diff = diffStats(diffs);
   const locPaths = Array.isArray(upd.locations)
     ? upd.locations.map((l) => l?.path).filter((p): p is string => typeof p === 'string' && !!p)
     : [];
   const paths = diff.paths.length > 0 ? diff.paths : locPaths.length > 0 ? locPaths : prev?.paths ?? [];
   const detail = contentDetail(upd.content) ?? prev?.detail;
+  const output = rawOutputText(upd.rawOutput) ?? extractContentOutput(upd.content) ?? prev?.output;
+
+  const meta = asRecord(upd._meta);
+  const metaCwd = meta?.['cognition.ai/cwd'];
+  const eventMs = cognitionTimestampMs(upd._meta);
+  const status = upd.status ?? prev?.status ?? (upd.sessionUpdate === 'tool_call' ? 'in_progress' : 'pending');
+  const terminal = status === 'completed' || status === 'failed';
+  const startedAtMs = upd.sessionUpdate === 'tool_call' ? eventMs ?? ts : prev?.startedAtMs;
+  const finishedAtMs = terminal ? eventMs ?? ts : prev?.finishedAtMs;
+  const durationMs = typeof startedAtMs === 'number' && typeof finishedAtMs === 'number'
+    ? Math.max(0, finishedAtMs - startedAtMs)
+    : prev?.durationMs;
+  const exit = terminalExitMeta(upd._meta);
 
   const next: ToolItem = {
     kind: 'tool',
@@ -271,12 +459,23 @@ function upsertToolItem(items: ChatItem[], upd: ToolCallLike, seq: number, ts: n
     name: typeof name === 'string' ? name : 'tool',
     title: upd.title ?? prev?.title,
     toolKind: upd.kind ?? prev?.toolKind,
-    status: upd.status ?? prev?.status ?? 'pending',
+    inferenceName: typeof inferenceName === 'string' ? inferenceName : prev?.inferenceName,
+    status,
     paths,
-    diffAdd: diff.hasDiff ? diff.add : prev?.diffAdd ?? 0,
-    diffDel: diff.hasDiff ? diff.del : prev?.diffDel ?? 0,
-    hasDiff: diff.hasDiff || (prev?.hasDiff ?? false),
+    diffAdd: diff.add,
+    diffDel: diff.del,
+    hasDiff: diff.hasDiff,
     detail,
+    command: input.command ?? prev?.command,
+    inputPreview: input.preview ?? prev?.inputPreview,
+    output,
+    cwd: typeof metaCwd === 'string' && metaCwd ? metaCwd : input.cwd ?? prev?.cwd,
+    diffs,
+    startedAtMs,
+    finishedAtMs,
+    durationMs,
+    exitCode: exit.exitCode !== undefined ? exit.exitCode : prev?.exitCode,
+    exitSignal: exit.exitSignal !== undefined ? exit.exitSignal : prev?.exitSignal,
   };
 
   if (idx >= 0) {
@@ -383,9 +582,52 @@ function mergeConfigOptions(prev: ConfigOption[], next: ConfigOption[]): ConfigO
 
 // ---------- 事件应用 ----------
 
+const CACHE_COMMAND_CHARS = 24_000;
+const CACHE_OUTPUT_CHARS = 50_000;
+const CACHE_SCALAR_CHARS = 1_200;
+
+function capCacheString(text: string, limit: number): string {
+  return text.length > limit ? text.slice(0, limit) : text;
+}
+
+function cacheStringLimit(key: string | undefined): number {
+  if (key === 'command' || key === 'cmd') return CACHE_COMMAND_CHARS;
+  if (key === 'content' || key === 'oldText' || key === 'newText') return 4_000;
+  return CACHE_SCALAR_CHARS;
+}
+
+/** rawInput/rawOutput 的有界副本 — 保留渲染需要的命令/路径/输出, 不把超长写入内容原样塞进历史缓存 */
+function cacheBoundedValue(value: unknown, key?: string, depth = 0): unknown {
+  if (typeof value === 'string') return capCacheString(value, cacheStringLimit(key));
+  if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value;
+  if (Array.isArray(value)) {
+    if (depth >= 2) return undefined;
+    return value.slice(0, 16).map((x) => cacheBoundedValue(x, key, depth + 1)).filter((x) => x !== undefined);
+  }
+  const rec = asRecord(value);
+  if (!rec || depth >= 2) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(rec).slice(0, 16)) {
+    const cached = cacheBoundedValue(v, k, depth + 1);
+    if (cached !== undefined) out[k] = cached;
+  }
+  return out;
+}
+
+function rawInputForCache(value: unknown): unknown {
+  if (typeof value === 'string') return capCacheString(value, CACHE_COMMAND_CHARS);
+  return cacheBoundedValue(value);
+}
+
+function rawOutputForCache(value: unknown): unknown {
+  if (typeof value === 'string') return capCacheString(value, CACHE_OUTPUT_CHARS);
+  return cacheBoundedValue(value);
+}
+
 /**
- * 入缓存前裁剪事件 — rawInput/rawOutput/acp-notification 不参与渲染重放且可能很大;
- * seq/ts/kind 与渲染所需 payload 原样保留, 避免长会话翻页后移动端内存被原始工具输出拖垮
+ * 入缓存前裁剪事件 — acp-notification 不参与渲染重放直接清空;
+ * rawInput/rawOutput 现在参与 IDE 风格渲染, 因此保留有界副本而不是整段丢弃,
+ * 避免长会话翻页后移动端内存被原始工具输入/输出拖垮
  */
 function eventForCache(event: SessionEvent): SessionEvent {
   if (event.kind === 'acp-notification') {
@@ -395,8 +637,8 @@ function eventForCache(event: SessionEvent): SessionEvent {
   const payload = asRecord(event.payload);
   if (!payload || (!('rawInput' in payload) && !('rawOutput' in payload))) return event;
   const copy = { ...payload };
-  delete copy.rawInput;
-  delete copy.rawOutput;
+  if ('rawInput' in copy) copy.rawInput = rawInputForCache(copy.rawInput);
+  if ('rawOutput' in copy) copy.rawOutput = rawOutputForCache(copy.rawOutput);
   return { ...event, payload: copy };
 }
 
@@ -433,7 +675,8 @@ function reduceEvent(state: ChatState, event: SessionEvent): ChatState {
           items = appendChunk(items, 'agent', extractText(u.content), seq, ts);
           break;
         case 'agent_thought_chunk':
-          items = appendChunk(items, 'thought', extractText(u.content), seq, ts);
+          // 历史批量导出的事件 ts 常常是拉取时间; thought 携带 cognition.ai/timestamp, 用它估算流式思考耗时
+          items = appendChunk(items, 'thought', extractText(u.content), seq, cognitionTimestampMs(u._meta) ?? ts);
           break;
         case 'user_message_chunk':
           // 加载的 devin 历史走 ACP user chunk; live prompt 的 echo 已由 server 过滤, 不会与信封事件双显

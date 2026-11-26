@@ -8,6 +8,7 @@ import React from 'react';
 import { View, TextInput, Pressable, StyleSheet, ScrollView, Image, Alert, ActivityIndicator } from 'react-native';
 import { colors } from '../theme/colors';
 import { T, M } from './ui';
+import { ideColors } from './ide-tool-cards';
 import { useFontTheme } from '../theme/fonts';
 import type { AvailableCommand } from '../protocol/acp';
 import {
@@ -107,12 +108,12 @@ export const Composer = React.forwardRef<ComposerHandle, Props>(function Compose
               <Pressable
                 key={c.name}
                 onPress={() => setText(`/${c.name} `)}
-                style={({ pressed }) => [styles.slashRow, pressed && { backgroundColor: colors.paper2 }]}
+                style={({ pressed }) => [styles.slashRow, pressed && { backgroundColor: ideColors.card2 }]}
               >
                 <M size={11.5} weight="bold" color={colors.acc}>
                   /{c.name}
                 </M>
-                <T size={10.5} color={colors.ink2} numberOfLines={1} style={{ flex: 1, marginLeft: 9 }}>
+                <T size={10.5} color={ideColors.dim} numberOfLines={1} style={{ flex: 1, marginLeft: 9 }}>
                   {c.description}
                   {c.input?.hint ? `  ‹${c.input.hint}›` : ''}
                 </T>
@@ -136,13 +137,13 @@ export const Composer = React.forwardRef<ComposerHandle, Props>(function Compose
               key={it.key}
               onPress={() => void runPick(it.key)}
               disabled={picking}
-              style={({ pressed }) => [styles.attachRow, pressed && { backgroundColor: colors.paper2 }]}
+              style={({ pressed }) => [styles.attachRow, pressed && { backgroundColor: ideColors.card2 }]}
             >
-              <M size={12} color={colors.ink}>{it.glyph}</M>
-              <T size={11.5} weight="medium" style={{ marginLeft: 10 }}>{it.label}</T>
+              <M size={12} color={ideColors.text}>{it.glyph}</M>
+              <T size={11.5} weight="medium" color={ideColors.text} style={{ marginLeft: 10 }}>{it.label}</T>
             </Pressable>
           ))}
-          <M size={8.5} color={colors.ink3} style={styles.attachHint}>
+          <M size={8.5} color={ideColors.faint} style={styles.attachHint}>
             图片 quality 0.7 · 文本文件限 200KB
           </M>
         </View>
@@ -157,7 +158,7 @@ export const Composer = React.forwardRef<ComposerHandle, Props>(function Compose
                 <Image source={{ uri: a.uri }} style={styles.attachThumb} />
               ) : (
                 <View style={styles.attachFileChip}>
-                  <M size={9.5} color={colors.ink} numberOfLines={1} style={{ maxWidth: 110 }}>
+                  <M size={9.5} color={ideColors.text} numberOfLines={1} style={{ maxWidth: 110 }}>
                     {a.fileName}
                   </M>
                 </View>
@@ -171,7 +172,7 @@ export const Composer = React.forwardRef<ComposerHandle, Props>(function Compose
       )}
 
       {holdHint && running && (
-        <M size={9} color={colors.ink3} style={styles.holdHint}>
+        <M size={9} color={ideColors.faint} style={styles.holdHint}>
           长按 ■ 停止当前任务
         </M>
       )}
@@ -181,16 +182,16 @@ export const Composer = React.forwardRef<ComposerHandle, Props>(function Compose
           disabled={disabled || picking}
           style={({ pressed }) => [
             styles.attachBtn,
-            attachMenuOpen && { backgroundColor: colors.ink },
+            attachMenuOpen && { backgroundColor: ideColors.blue },
             pressed && styles.sendBtnPressed,
             (disabled || picking) && { opacity: 0.35 },
           ]}
           accessibilityLabel="添加附件"
         >
           {picking ? (
-            <ActivityIndicator size="small" color={attachMenuOpen ? colors.paper : colors.ink} />
+            <ActivityIndicator size="small" color={attachMenuOpen ? '#fff' : ideColors.text} />
           ) : (
-            <T size={14} weight="bold" color={attachMenuOpen ? colors.paper : colors.ink}>＋</T>
+            <T size={14} weight="bold" color={attachMenuOpen ? '#fff' : ideColors.text}>＋</T>
           )}
         </Pressable>
         <TextInput
@@ -199,7 +200,7 @@ export const Composer = React.forwardRef<ComposerHandle, Props>(function Compose
           value={text}
           onChangeText={setText}
           placeholder="输入消息，或 / 命令"
-          placeholderTextColor={colors.ink3}
+          placeholderTextColor={ideColors.faint}
           multiline
           editable={!disabled}
           onSubmitEditing={submit}
@@ -213,7 +214,7 @@ export const Composer = React.forwardRef<ComposerHandle, Props>(function Compose
             }}
             onLongPress={onCancel}
             delayLongPress={450}
-            style={({ pressed }) => [styles.sendBtn, { backgroundColor: colors.ink }, pressed && styles.sendBtnPressed]}
+            style={({ pressed }) => [styles.sendBtn, { backgroundColor: ideColors.card2 }, pressed && styles.sendBtnPressed]}
             accessibilityLabel="停止 — 长按"
           >
             <T size={12} weight="bold" color="#fff">■</T>
@@ -245,12 +246,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingBottom: 10,
     paddingTop: 2,
-    backgroundColor: colors.paper,
+    backgroundColor: '#111114',
   },
   slashMenu: {
-    backgroundColor: colors.card,
-    borderWidth: 1.5,
-    borderColor: colors.ink,
+    backgroundColor: ideColors.shell,
+    borderWidth: 1,
+    borderColor: ideColors.border,
+    borderRadius: 9,
     marginBottom: 8,
   },
   slashRow: {
@@ -259,12 +261,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 9,
     borderBottomWidth: 1,
-    borderBottomColor: colors.hairline,
+    borderBottomColor: ideColors.borderSoft,
   },
   attachMenu: {
-    backgroundColor: colors.card,
-    borderWidth: 1.5,
-    borderColor: colors.ink,
+    backgroundColor: ideColors.shell,
+    borderWidth: 1,
+    borderColor: ideColors.border,
+    borderRadius: 9,
     marginBottom: 8,
   },
   attachRow: {
@@ -273,7 +276,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: colors.hairline,
+    borderBottomColor: ideColors.borderSoft,
   },
   attachHint: {
     paddingHorizontal: 12,
@@ -291,9 +294,10 @@ const styles = StyleSheet.create({
   attachThumb: {
     width: 46,
     height: 46,
-    borderWidth: 1.5,
-    borderColor: colors.ink,
-    backgroundColor: colors.paper2,
+    borderWidth: 1,
+    borderColor: ideColors.border,
+    borderRadius: 6,
+    backgroundColor: ideColors.card2,
   },
   attachFileChip: {
     height: 46,
@@ -301,9 +305,10 @@ const styles = StyleSheet.create({
     maxWidth: 130,
     justifyContent: 'center',
     paddingHorizontal: 8,
-    borderWidth: 1.5,
-    borderColor: colors.ink,
-    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: ideColors.border,
+    borderRadius: 6,
+    backgroundColor: ideColors.card,
   },
   attachRemove: {
     position: 'absolute',
@@ -311,7 +316,8 @@ const styles = StyleSheet.create({
     right: -6,
     width: 16,
     height: 16,
-    backgroundColor: colors.ink,
+    borderRadius: 8,
+    backgroundColor: ideColors.red,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -319,9 +325,10 @@ const styles = StyleSheet.create({
   inputBar: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    backgroundColor: colors.card,
-    borderWidth: 2,
-    borderColor: colors.ink,
+    backgroundColor: ideColors.shell,
+    borderWidth: 1,
+    borderColor: ideColors.border,
+    borderRadius: 10,
     paddingLeft: 6,
     paddingRight: 6,
     paddingVertical: 6,
@@ -332,14 +339,15 @@ const styles = StyleSheet.create({
     height: 30,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: colors.ink,
-    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: ideColors.border,
+    borderRadius: 7,
+    backgroundColor: ideColors.card,
   },
   input: {
     flex: 1,
     fontSize: 13,
-    color: colors.ink,
+    color: ideColors.text,
     paddingVertical: 5,
     maxHeight: 110,
     lineHeight: 18,
