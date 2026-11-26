@@ -54,6 +54,9 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="session/[id]" />
           <Stack.Screen name="new-session" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="settings/quota" />
+          <Stack.Screen name="settings/workdirs" />
+          <Stack.Screen name="settings/config" />
         </Stack>
       </SafeAreaProvider>
     </FontProvider>

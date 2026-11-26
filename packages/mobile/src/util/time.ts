@@ -31,3 +31,35 @@ export function dirName(cwd: string): string {
   const parts = cwd.split(/[\\/]/).filter(Boolean);
   return parts[parts.length - 1] ?? cwd;
 }
+
+/** 本地时刻 "HH:mm" (24 小时制, 补零) */
+export function clockTime(ts: number): string {
+  const d = new Date(ts);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+/** 本地日期时刻 "M月D日 HH:mm" — 额度重置时间等绝对时间展示用 */
+export function dateTimeText(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${clockTime(ts)}`;
+}
+
+/**
+ * 未来时间相对文案 — 额度重置倒计时用:
+ *   < 1h  "45 分钟后" | < 24h "5 小时后" | < 2d "明天 HH:mm" | 其余 "x 天后"
+ * 已过期返回 null (调用方决定兜底显示)
+ */
+export function futureText(ts: number, now: number = Date.now()): string | null {
+  const diff = ts - now;
+  if (diff <= 0) return null;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return '即将';
+  if (min < 60) return `${min} 分钟后`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour} 小时后`;
+  const day = Math.floor(hour / 24);
+  if (day < 2) return `明天 ${clockTime(ts)}`;
+  return `${day} 天后`;
+}

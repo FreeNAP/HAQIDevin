@@ -3,10 +3,12 @@
  *  - 主机信息卡: 域名 / TLS / 延迟 / 隧道类型
  *  - server.status 服务器卡: 版本/在线时长/会话数/设备数
  *  - 已配对设备列表: 当前设备标记, 撤销其他设备 (Alert 确认)
+ *  - 已撤销设备: server 过滤不返回, 本地跟踪本次会话内刚撤销的设备 → 可彻底删除 (device.delete)
+ *  - 主机配置入口: 额度用量 / 工作目录 / 规则与 MCP
  *  - 重新配对入口: 清本地凭据回配对态
  */
 import React from 'react';
-import { View, ScrollView, Pressable, StyleSheet, Alert, RefreshControl } from 'react-native';
+import { View, ScrollView, Pressable, StyleSheet, Alert, RefreshControl, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { colors } from '../../src/theme/colors';
@@ -39,6 +41,60 @@ function DeviceRow({ dev, isSelf, onRevoke }: { dev: DeviceInfo; isSelf: boolean
   );
 }
 
+/** 已撤销设备行 — 本地跟踪, 提供彻底删除入口 */
+function RevokedDeviceRow({ dev, deleting, onDelete }: { dev: DeviceInfo; deleting: boolean; onDelete: () => void }) {
+  return (
+    <View style={[styles.devRow, styles.devRowRevoked]}>
+      <View style={{ flex: 1 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+          <T size={12.5} weight="bold" color={colors.ink2}>{dev.deviceName}</T>
+          <View style={styles.revokedTag}>
+            <T size={8} weight="bold" color={colors.danger} uppercase ls={0.5}>已撤销</T>
+          </View>
+        </View>
+        <M size={9} color={colors.ink3} style={{ marginTop: 3 }}>
+          {dev.platform ?? '设备'} · 访问权限已回收
+        </M>
+      </View>
+      {deleting ? (
+        <ActivityIndicator size="small" color={colors.danger} />
+      ) : (
+        <HardButton text="删除" small danger onPress={onDelete} />
+      )}
+    </View>
+  );
+}
+
+/** 配置入口行 — 硬边列表项 + 右侧箭头 */
+function ConfigEntryRow({
+  title,
+  desc,
+  last,
+  onPress,
+}: {
+  title: string;
+  desc: string;
+  last?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.entryRow,
+        last && { borderBottomWidth: 1.5 },
+        pressed && { backgroundColor: colors.paper2 },
+      ]}
+    >
+      <View style={{ flex: 1 }}>
+        <T size={12.5} weight="bold">{title}</T>
+        <M size={8.5} color={colors.ink3} style={{ marginTop: 3 }}>{desc}</M>
+      </View>
+      <M size={12} color={colors.acc}>→</M>
+    </Pressable>
+  );
+}
+
 export default function DevicesPage() {
   const insets = useSafeAreaInsets();
   const phase = useConnectionStore((s) => s.phase);
@@ -50,6 +106,10 @@ export default function DevicesPage() {
   const selfDeviceName = useConnectionStore((s) => s.selfDeviceName);
   const serverVersion = useConnectionStore((s) => s.serverVersion);
   const [refreshing, setRefreshing] = React.useState(false);
+  /** 本次会话内刚撤销的设备快照 — server 的 device.list 过滤已撤销设备,
+   *  撤销后行会消失; 本地保留快照展示"删除"入口, 彻底删除或离开页面后消失 */
+  const [revokedLocal, setRevokedLocal] = React.useState<DeviceInfo[]>([]);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
 
   const authed = phase === 'authed';
 
@@ -75,11 +135,42 @@ export default function DevicesPage() {
         style: 'destructive',
         onPress: () => {
           client.revokeDevice(dev.deviceId);
+          // 乐观快照: 撤销后 server 列表过滤该设备, 本地保留行以提供"彻底删除"入口
+          setRevokedLocal((prev) =>
+            prev.some((d) => d.deviceId === dev.deviceId) ? prev : [...prev, { ...dev, online: false }],
+          );
           // 服务器处理后广播 device.list 更新; 此处即时刷新一次
           setTimeout(() => client.requestDevices(), 600);
         },
       },
     ]);
+  }
+
+  function confirmDelete(dev: DeviceInfo) {
+    Alert.alert(
+      '彻底删除设备',
+      `删除「${dev.deviceName}」的全部配对记录？删除后该设备必须重新配对才能接入。`,
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '删除',
+          style: 'destructive',
+          onPress: () => {
+            setDeletingId(dev.deviceId);
+            void client
+              .deleteDevice(dev.deviceId)
+              .then(() => {
+                setRevokedLocal((prev) => prev.filter((d) => d.deviceId !== dev.deviceId));
+                client.requestDevices();
+              })
+              .catch((e) => {
+                Alert.alert('删除失败', e instanceof Error ? e.message : '删除设备失败, 请重试');
+              })
+              .finally(() => setDeletingId(null));
+          },
+        },
+      ],
+    );
   }
 
   function confirmRePair() {
@@ -96,6 +187,8 @@ export default function DevicesPage() {
   }
 
   const isTls = activeHost?.url.startsWith('wss://') ?? false;
+  // 已撤销快照中若某 id 重新出现在配对清单 (重新配对), 本地行隐藏 — 以 server 清单为准
+  const revokedVisible = revokedLocal.filter((r) => !devices.some((d) => d.deviceId === r.deviceId));
 
   return (
     <View style={[styles.page, { paddingTop: insets.top }]}>
@@ -184,6 +277,44 @@ export default function DevicesPage() {
           </View>
         ))}
 
+        {/* 已撤销设备 (本地跟踪) — server 列表过滤已撤销设备, 仅在本次会话内撤销的可见 */}
+        {revokedVisible.length > 0 && (
+          <>
+            <T size={10} weight="bold" uppercase ls={1.6} color={colors.ink2} style={styles.sectionLabel}>
+              已撤销 · 可彻底删除
+            </T>
+            {revokedVisible.map((d, idx) => (
+              <View key={d.deviceId} style={idx === revokedVisible.length - 1 ? { borderBottomWidth: 1.5, borderBottomColor: colors.ink } : undefined}>
+                <RevokedDeviceRow dev={d} deleting={deletingId === d.deviceId} onDelete={() => confirmDelete(d)} />
+              </View>
+            ))}
+            <M size={8.5} color={colors.ink3} style={{ marginTop: 6 }}>
+              已撤销设备不再出现在配对清单 · 删除后须重新配对
+            </M>
+          </>
+        )}
+
+        {/* 主机配置入口 */}
+        <T size={10} weight="bold" uppercase ls={1.6} color={colors.ink2} style={styles.sectionLabel}>
+          主机配置
+        </T>
+        <ConfigEntryRow
+          title="额度用量"
+          desc="计划 / 日限周限剩余 / 透支余额"
+          onPress={() => router.push('/settings/quota')}
+        />
+        <ConfigEntryRow
+          title="工作目录"
+          desc="会话可创建的目录清单管理"
+          onPress={() => router.push('/settings/workdirs')}
+        />
+        <ConfigEntryRow
+          title="规则与 MCP"
+          desc="全局规则 / MCP 服务器配置查看"
+          last
+          onPress={() => router.push('/settings/config')}
+        />
+
         {/* 重新配对 */}
         <View style={{ marginTop: 22 }}>
           <HardButton text="重新配对本机" danger onPress={confirmRePair} />
@@ -250,6 +381,24 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   devRowSelf: { backgroundColor: colors.accSoft },
+  devRowRevoked: { backgroundColor: colors.paper2 },
+  revokedTag: {
+    borderWidth: 1,
+    borderColor: colors.danger,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+  },
+  entryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1.5,
+    borderColor: colors.ink,
+    borderBottomWidth: 0,
+    backgroundColor: colors.card,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+  },
   onlineDot: { width: 6, height: 6, backgroundColor: colors.ok },
   selfTag: {
     borderWidth: 1.5,

@@ -24,6 +24,9 @@ import type {
   FsDeleteResult,
   FsMoveResult,
   FsCopyResult,
+  AccountQuotaMsg,
+  ConfigRulesMsg,
+  ConfigMcpMsg,
 } from '../protocol/wire';
 import { useConnectionStore } from '../store/connection';
 import { useSessionsStore } from '../store/sessions';
@@ -68,6 +71,32 @@ interface PendingFs {
 interface PendingCreate {
   cwd: string;
   resolve: (s: SessionMeta) => void;
+  reject: (e: Error) => void;
+  timer: Timer;
+}
+
+/** 按响应 type 匹配的简单请求 (account.quota / config.rules / config.mcp) — 同类响应兑现全部在途等待者 */
+interface PendingSimple {
+  resolve: (msg: ServerMessage) => void;
+  reject: (e: Error) => void;
+  timer: Timer;
+}
+
+/** device.delete 在途请求 — 响应 device.deleted 带 deviceId 精确匹配;
+ *  错误 delete_rejected 无 ref, 采用启发式: 仅在途一个删除时归给它 */
+interface PendingDelete {
+  deviceId: string;
+  resolve: () => void;
+  reject: (e: Error) => void;
+  timer: Timer;
+}
+
+/** workdir.add/remove 在途请求 — 无专用成功响应: 成功后 server 广播新 workdir.list 即兑现;
+ *  失败 error 带 ref=请求路径, 归一匹配拒绝 */
+interface PendingWorkdir {
+  op: 'workdir.add' | 'workdir.remove';
+  key: string;             // normalizeFsKey(path)
+  resolve: () => void;
   reject: (e: Error) => void;
   timer: Timer;
 }
@@ -119,6 +148,10 @@ class DevinClient {
   private pendingCreates: PendingCreate[] = [];
   private pendingLoads: PendingLoad[] = [];
   private pendingFs: PendingFs[] = [];
+  /** 响应 type → 在途等待者 (quota/config 类无 ref 机制的查询) */
+  private pendingSimple = new Map<string, PendingSimple[]>();
+  private pendingDeletes: PendingDelete[] = [];
+  private pendingWorkdirs: PendingWorkdir[] = [];
 
   // ---------- 公共 API ----------
 
@@ -328,6 +361,117 @@ class DevinClient {
     if (this.authed) this.send({ type: 'device.revoke', deviceId });
   }
 
+  // ---------- 设备删除 / 工作目录 / 配置 / 额度 (请求-响应型) ----------
+
+  /** 删除已撤销设备 — 成功响应 device.deleted; 失败 error delete_rejected (无 ref, 单在途启发式归并) */
+  deleteDevice(deviceId: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      if (!this.authed || !this.isOpen()) {
+        reject(new Error('尚未连接到主机'));
+        return;
+      }
+      const timer = setTimeout(() => {
+        this.pendingDeletes = this.pendingDeletes.filter((p) => !(p.deviceId === deviceId && p.resolve === resolve));
+        reject(new Error('请求超时 — 主机未响应'));
+      }, FS_TIMEOUT_MS);
+      this.pendingDeletes.push({ deviceId, resolve, reject, timer });
+      this.send({ type: 'device.delete', deviceId });
+    });
+  }
+
+  /**
+   * 新增工作目录 — 成功无专用响应, server 广播新 workdir.list 即兑现;
+   * 失败 error 带 ref=请求路径 (归一匹配); 15s 超时兜底
+   */
+  addWorkdir(path: string): Promise<void> {
+    return this.workdirRequest('workdir.add', path, { type: 'workdir.add', path });
+  }
+
+  /** 移除工作目录 — 至少保留一个 (server 强制); 兑现/拒绝语义同 addWorkdir */
+  removeWorkdir(path: string): Promise<void> {
+    return this.workdirRequest('workdir.remove', path, { type: 'workdir.remove', path });
+  }
+
+  private workdirRequest(op: 'workdir.add' | 'workdir.remove', path: string, msg: ClientMessage): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      if (!this.authed || !this.isOpen()) {
+        reject(new Error('尚未连接到主机'));
+        return;
+      }
+      const timer = setTimeout(() => {
+        this.pendingWorkdirs = this.pendingWorkdirs.filter((p) => !(p.op === op && p.resolve === resolve));
+        reject(new Error('请求超时 — 主机未响应'));
+      }, FS_TIMEOUT_MS);
+      this.pendingWorkdirs.push({ op, key: normalizeFsKey(path), resolve, reject, timer });
+      this.send(msg);
+    });
+  }
+
+  /** 查询账户额度 — 响应复用同名 type, 按 type 兑现全部在途等待者 */
+  requestQuota(): Promise<AccountQuotaMsg> {
+    return this.simpleRequest<AccountQuotaMsg>('account.quota', { type: 'account.quota' });
+  }
+
+  /** 读取规则配置 — cwd 缺省仅 global 层 */
+  getRulesConfig(cwd?: string): Promise<ConfigRulesMsg> {
+    const msg: ClientMessage = cwd ? { type: 'config.rules.get', cwd } : { type: 'config.rules.get' };
+    return this.simpleRequest<ConfigRulesMsg>('config.rules', msg);
+  }
+
+  /** 读取 MCP 配置 — cwd 缺省仅用户/遗留层 */
+  getMcpConfig(cwd?: string): Promise<ConfigMcpMsg> {
+    const msg: ClientMessage = cwd ? { type: 'config.mcp.get', cwd } : { type: 'config.mcp.get' };
+    return this.simpleRequest<ConfigMcpMsg>('config.mcp', msg);
+  }
+
+  /**
+   * 无 ref 关联机制的查询统一入口 — 响应 type 与请求不同名但唯一 (get→config.rules / quota→account.quota),
+   * 按响应 type 匹配; 同类并发查询结果等价, 全部兑现; 断连时 teardown 统一拒绝
+   */
+  private simpleRequest<T extends ServerMessage>(responseType: string, msg: ClientMessage): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      if (!this.authed || !this.isOpen()) {
+        reject(new Error('尚未连接到主机'));
+        return;
+      }
+      const timer = setTimeout(() => {
+        const arr = this.pendingSimple.get(responseType);
+        if (arr) {
+          const next = arr.filter((p) => p.resolve !== (resolve as (m: ServerMessage) => void));
+          if (next.length > 0) this.pendingSimple.set(responseType, next);
+          else this.pendingSimple.delete(responseType);
+        }
+        reject(new Error('请求超时 — 主机未响应'));
+      }, FS_TIMEOUT_MS);
+      const arr = this.pendingSimple.get(responseType) ?? [];
+      arr.push({ resolve: resolve as (m: ServerMessage) => void, reject, timer });
+      this.pendingSimple.set(responseType, arr);
+      this.send(msg);
+    });
+  }
+
+  /** 简单查询兑现 — 该 type 全部在途等待者共享同一响应 */
+  private resolveSimple(type: string, msg: ServerMessage): void {
+    const arr = this.pendingSimple.get(type);
+    if (!arr || arr.length === 0) return;
+    this.pendingSimple.delete(type);
+    for (const p of arr) {
+      clearTimeout(p.timer);
+      p.resolve(msg);
+    }
+  }
+
+  /** 简单查询拒绝 — error 到达且能归属该 type 时调用 */
+  private rejectSimple(type: string, err: Error): void {
+    const arr = this.pendingSimple.get(type);
+    if (!arr || arr.length === 0) return;
+    this.pendingSimple.delete(type);
+    for (const p of arr) {
+      clearTimeout(p.timer);
+      p.reject(err);
+    }
+  }
+
   // ---------- 契约 v2: 文件系统 ----------
 
   /** 列目录 — path 须在 server workdirs 监狱内; 未连接/超时 reject; 失败经 error 消息 reject */
@@ -535,6 +679,23 @@ class DevinClient {
       p.reject(new Error('连接已断开'));
     }
     this.pendingFs = [];
+    for (const arr of this.pendingSimple.values()) {
+      for (const p of arr) {
+        clearTimeout(p.timer);
+        p.reject(new Error('连接已断开'));
+      }
+    }
+    this.pendingSimple.clear();
+    for (const p of this.pendingDeletes) {
+      clearTimeout(p.timer);
+      p.reject(new Error('连接已断开'));
+    }
+    this.pendingDeletes = [];
+    for (const p of this.pendingWorkdirs) {
+      clearTimeout(p.timer);
+      p.reject(new Error('连接已断开'));
+    }
+    this.pendingWorkdirs = [];
     this.authed = false;
     if (closeSocket && this.ws) {
       try {
@@ -752,6 +913,45 @@ class DevinClient {
       }
       case 'workdir.list': {
         conn.setWorkdirs(msg.dirs);
+        // add/remove 无专用成功响应 — server 处理后广播新清单; 按内容感知兑现:
+        //   add    → 清单已含该路径 (归一比较) 才兑现 — 操作前的旧快照不误兑现
+        //   remove → 清单已不含该路径 才兑现
+        // 失败路径由 error (ref=请求路径) 拒绝, 双通道不会互踩
+        if (this.pendingWorkdirs.length > 0) {
+          const keys = new Set(msg.dirs.map((d) => normalizeFsKey(d.path)));
+          const remaining: PendingWorkdir[] = [];
+          for (const p of this.pendingWorkdirs) {
+            const done = p.op === 'workdir.add' ? keys.has(p.key) : !keys.has(p.key);
+            if (done) {
+              clearTimeout(p.timer);
+              p.resolve();
+            } else {
+              remaining.push(p);
+            }
+          }
+          this.pendingWorkdirs = remaining;
+        }
+        return;
+      }
+      case 'device.deleted': {
+        const idx = this.pendingDeletes.findIndex((p) => p.deviceId === msg.deviceId);
+        if (idx >= 0) {
+          const [pending] = this.pendingDeletes.splice(idx, 1);
+          clearTimeout(pending.timer);
+          pending.resolve();
+        }
+        return;
+      }
+      case 'account.quota': {
+        this.resolveSimple('account.quota', msg);
+        return;
+      }
+      case 'config.rules': {
+        this.resolveSimple('config.rules', msg);
+        return;
+      }
+      case 'config.mcp': {
+        this.resolveSimple('config.mcp', msg);
         return;
       }
       case 'fs.list':
@@ -786,6 +986,42 @@ class DevinClient {
         pending.reject(new Error(message || '操作失败'));
         return;
       }
+    }
+
+    // workdir.add/remove 错误 — ref = 请求路径原样串, 归一匹配
+    if (ref && (code.startsWith('workdir_') || this.pendingWorkdirs.some((p) => p.key === normalizeFsKey(ref)))) {
+      const nref = normalizeFsKey(ref);
+      const idx = this.pendingWorkdirs.findIndex((p) => p.key === nref);
+      if (idx >= 0) {
+        const [pending] = this.pendingWorkdirs.splice(idx, 1);
+        clearTimeout(pending.timer);
+        pending.reject(new Error(message || '操作失败'));
+        return;
+      }
+    }
+
+    // 额度查询失败 — 无 ref, 按 type 归属全部在途等待者
+    if (code === 'quota_failed') {
+      this.rejectSimple('account.quota', new Error(message || '额度查询失败'));
+      return;
+    }
+
+    // device.delete 失败 — delete_rejected 无 ref; 仅单个删除在途时可安全归属, 并发场景兜底超时
+    if (code === 'delete_rejected' && this.pendingDeletes.length === 1) {
+      const [pending] = this.pendingDeletes.splice(0, 1);
+      clearTimeout(pending.timer);
+      pending.reject(new Error(message || '删除失败'));
+      return;
+    }
+
+    // config.rules/mcp 错误 — ref 为 cwd 或字面量 'rules'/'mcp'; 手机端查看器不带 cwd, 字面量精确归属
+    if (ref === 'rules') {
+      this.rejectSimple('config.rules', new Error(message || '读取规则配置失败'));
+      return;
+    }
+    if (ref === 'mcp') {
+      this.rejectSimple('config.mcp', new Error(message || '读取 MCP 配置失败'));
+      return;
     }
 
     if (code === 'load_failed') {

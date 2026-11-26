@@ -166,8 +166,59 @@ export interface DeviceRevokeMsg {
   deviceId: string;
 }
 
+/** 删除设备 — 仅已撤销设备可删, 成功响应 device.deleted */
+export interface DeviceDeleteMsg {
+  type: 'device.delete';
+  deviceId: string;
+}
+
 export interface WorkdirListRequest {
   type: 'workdir.list';
+}
+
+/** 新增工作目录 — 必须绝对路径且已存在; 重复拒绝; 成功后 server 广播新 workdir.list */
+export interface WorkdirAddRequest {
+  type: 'workdir.add';
+  path: string;
+  label?: string;
+}
+
+/** 移除工作目录 — 至少保留一个; 成功后 server 广播新 workdir.list */
+export interface WorkdirRemoveRequest {
+  type: 'workdir.remove';
+  path: string;
+}
+
+/** 读取规则配置 (global windsurf 规则 + 可选项目级) — 宽松解析, 字段缺失不崩 */
+export interface ConfigRulesGetRequest {
+  type: 'config.rules.get';
+  cwd?: string;
+}
+
+export interface ConfigRulesSetRequest {
+  type: 'config.rules.set';
+  scope?: 'global' | 'project';
+  cwd?: string;
+  name?: string;
+  content: string;
+}
+
+/** 读取 MCP 配置 — 多层合并视图 */
+export interface ConfigMcpGetRequest {
+  type: 'config.mcp.get';
+  cwd?: string;
+}
+
+export interface ConfigMcpSetRequest {
+  type: 'config.mcp.set';
+  scope?: 'user' | 'project' | 'local';
+  cwd?: string;
+  config: Record<string, unknown>;
+}
+
+/** 查询账户额度 — connect-RPC 优先, events 统计作 fallback */
+export interface AccountQuotaRequest {
+  type: 'account.quota';
 }
 
 // ---------- 契约 v2: 文件系统 (对话页资源管理器) — 形状与 packages/protocol 对齐 ----------
@@ -235,7 +286,15 @@ export type ClientMessage =
   | StatusRequest
   | DeviceListRequest
   | DeviceRevokeMsg
+  | DeviceDeleteMsg
   | WorkdirListRequest
+  | WorkdirAddRequest
+  | WorkdirRemoveRequest
+  | ConfigRulesGetRequest
+  | ConfigRulesSetRequest
+  | ConfigMcpGetRequest
+  | ConfigMcpSetRequest
+  | AccountQuotaRequest
   | FsListRequest
   | FsReadRequest
   | FsWriteRequest
@@ -374,6 +433,87 @@ export interface WorkdirListMsg {
   dirs: { path: string; label?: string; exists?: boolean }[];
 }
 
+/** device.delete 成功响应 — 仅发给请求方 */
+export interface DeviceDeletedMsg {
+  type: 'device.deleted';
+  deviceId: string;
+}
+
+// ---------- 配置查看 (规则 / MCP) — 宽松解析镜像, 字段缺失/畸形不崩 ----------
+
+export interface RuleFileInfo {
+  name: string;
+  path: string;
+  provider: 'windsurf' | 'cursor' | 'devin';
+  activation: 'always-on' | 'conditional' | 'unknown';
+  content: string;
+}
+
+export interface RulesProjectInfo {
+  cwd: string;
+  files: RuleFileInfo[];
+}
+
+export interface ConfigRulesMsg {
+  type: 'config.rules';
+  global: {
+    path: string;
+    exists: boolean;
+    content: string;
+    provider: 'windsurf';
+  };
+  projects: RulesProjectInfo[];
+  writtenPath?: string;
+  backupPath?: string;
+}
+
+export interface McpConfigLayer {
+  scope: 'user' | 'legacy-windsurf' | 'legacy-claude' | 'legacy-cursor' | 'legacy-opencode' | 'project' | 'local';
+  path: string;
+  exists: boolean;
+  config?: Record<string, unknown>;
+  error?: string;
+}
+
+export interface ConfigMcpMsg {
+  type: 'config.mcp';
+  layers: McpConfigLayer[];
+  effective: {
+    mcpServers: Record<string, unknown>;
+  };
+  writtenPath?: string;
+  backupPath?: string;
+}
+
+// ---------- 账户额度 ----------
+
+export interface AccountUsageAggregate {
+  totalCreditCost: number;
+  totalAcuCost: number;
+  inputTokens: number;
+  eventCount: number;
+  sessions: number;
+}
+
+export interface AccountQuotaMsg {
+  type: 'account.quota';
+  source: 'connect-rpc' | 'events-fallback' | 'none';
+  weeklyRemainingPercent: number | null;
+  dailyRemainingPercent: number | null;
+  /** unix ms; 探不到为 null */
+  dailyResetAt: number | null;
+  weeklyResetAt: number | null;
+  /** overage 余额, 单位 micros (1/1e6 美元; 负 = 透支) */
+  overageBalance: number | null;
+  overageBalanceMicros: number | null;
+  acuConsumed: number | null;
+  acuLimit: number | null;
+  planName: string | null;
+  sessionUsage: AccountUsageAggregate;
+  /** connect-RPC 原始响应的安全截断投影; 不含敏感信息 */
+  raw: unknown;
+}
+
 // ---------- 契约 v2: fs 响应 — 形状与 packages/protocol 对齐 ----------
 // 响应 type 与请求同名 (如 fs.list 的响应也是 fs.list), 按 type+path 关联;
 // 失败不产生结果消息, 而是统一 error 消息 (ref=path / "src -> dst")
@@ -457,7 +597,11 @@ export type ServerMessage =
   | PermissionResolvedMsg
   | ServerStatus
   | DeviceListMsg
+  | DeviceDeletedMsg
   | WorkdirListMsg
+  | ConfigRulesMsg
+  | ConfigMcpMsg
+  | AccountQuotaMsg
   | FsListResult
   | FsReadResult
   | FsWriteResult
