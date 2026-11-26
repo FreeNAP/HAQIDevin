@@ -425,12 +425,26 @@ export default function ChatPage() {
   const oldestLoadedTs = state.events[0]?.ts ?? state.items[0]?.ts ?? null;
   const newestLoadedTs = state.items[state.items.length - 1]?.ts ?? null;
 
-  /** inverted 列表到底(视觉上到最旧消息) → 自动向前翻一页; 错误时停止自动重试, 顶部 footer 手动重试 */
-  const onEndReached = React.useCallback(() => {
+  /** 历史翻页门控 — RN FlatList 的 onEndReached 在内容不足一屏时挂载即触发, 会形成自动连续翻页链;
+   *  改为 onScroll 用户真实滚动驱动: 滚近最旧端才触发, 触发后解除武装, 离开顶部区域再进入才重新允许 */
+  const userDraggedRef = React.useRef(false);
+  const historyArmedRef = React.useRef(true);
+  const onListScroll = React.useCallback((e: { nativeEvent: { contentOffset: { y: number }; contentSize: { height: number }; layoutMeasurement: { height: number } } }) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    const distFromOldest = contentSize.height - (contentOffset.y + layoutMeasurement.height);
+    if (distFromOldest > 500) {
+      historyArmedRef.current = true;
+      return;
+    }
+    if (!userDraggedRef.current || !historyArmedRef.current) return;
     const cur = useChatStore.getState().bySession[sessionId];
     if (!cur?.truncated || historyLoading || historyError) return;
+    historyArmedRef.current = false;
     void loadEarlier();
   }, [sessionId, historyLoading, historyError, loadEarlier]);
+  const onListDragBegin = React.useCallback(() => {
+    userDraggedRef.current = true;
+  }, []);
 
   const onMessageLongPress = React.useCallback((item: ChatItem) => {
     if ((item.kind !== 'user' && item.kind !== 'agent') || !item.text.trim()) return;
@@ -756,8 +770,9 @@ export default function ChatPage() {
               {renderItem(item, streamingAgentId, onMessageLongPress, cwd)}
             </View>
           )}
-          onEndReached={onEndReached}
-          onEndReachedThreshold={0.25}
+          onScroll={onListScroll}
+          scrollEventThrottle={200}
+          onScrollBeginDrag={onListDragBegin}
           onScrollToIndexFailed={onScrollToIndexFailed}
           ListFooterComponent={
             state.items.length > 0 ? (
