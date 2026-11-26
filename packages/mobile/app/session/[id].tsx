@@ -428,6 +428,7 @@ export default function ChatPage() {
   /** 历史翻页门控 — RN FlatList 的 onEndReached 在内容不足一屏时挂载即触发, 会形成自动连续翻页链;
    *  改为 onScroll 用户真实滚动驱动: 滚近最旧端才触发, 触发后解除武装, 离开顶部区域再进入才重新允许 */
   const userDraggedRef = React.useRef(false);
+  const lastLoadTsRef = React.useRef(0);
   const historyArmedRef = React.useRef(true);
   const onListScroll = React.useCallback((e: { nativeEvent: { contentOffset: { y: number }; contentSize: { height: number }; layoutMeasurement: { height: number } } }) => {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
@@ -439,7 +440,9 @@ export default function ChatPage() {
     if (!userDraggedRef.current || !historyArmedRef.current) return;
     const cur = useChatStore.getState().bySession[sessionId];
     if (!cur?.truncated || historyLoading || historyError) return;
+    if (Date.now() - lastLoadTsRef.current < 1200) return; // prepend 布局稳定冷却, 防连锁触发
     historyArmedRef.current = false;
+    lastLoadTsRef.current = Date.now();
     void loadEarlier();
   }, [sessionId, historyLoading, historyError, loadEarlier]);
   const onListDragBegin = React.useCallback(() => {
@@ -770,6 +773,7 @@ export default function ChatPage() {
               {renderItem(item, streamingAgentId, onMessageLongPress, cwd)}
             </View>
           )}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           onScroll={onListScroll}
           scrollEventThrottle={200}
           onScrollBeginDrag={onListDragBegin}
