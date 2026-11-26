@@ -551,3 +551,29 @@ HAQIDevin/
 
 ### 施工约束
 - [id].tsx 与 chatReducer 与批 A 翻页有文件冲突 — 必须等批 A 收割后施工
+
+---
+
+## 十七、会话列表批 (2026-11-26 晚 用户反馈, 待施工)
+
+> 用户对比官方 devin 客户端侧栏后提出。上下文耗尽未能施工, 下批第一优先。
+
+### 需求清单
+1. **状态显示错误(urgent)**: mobile 全显示"已完成", 但官方端 HAQIDevin/具身智能设计是 Working。
+   根因: `restoreSessions` 强制 status=idle(runtime.ts:511) + mobile `idle→已完成` 映射(sessions.tsx:34)。
+   修复方向: 运行中会话的真实状态不能一刀切 idle——devin acp session/load 后 agent 会推送真实状态;
+   或 subscribe 时对 acpLoaded 会话重新评估。idle 也不该叫"已完成"(idle 是闲置非完成)。
+   建议映射: running→运行中, idle→闲置, waiting_permission→待审批, error→错误, 无"已完成"概念(devin 没有完成态)。
+2. **长按会话菜单**: 改名(server 需加 session.rename 持久化 title 覆盖) / 归档(archived 标志, 列表过滤, 归档区可恢复)。
+3. **标题显示异常**: "未命名会话"泛滥 + 原始 prompt 截断当标题——官方端会生成整理后的标题。
+   devin acp 可能推送 session title 更新(runtime.ts:117 已有 u.title 处理)——查为何没生效或没持久化。
+4. **子 agent 会话过滤**: 列表不应显示子 agent/subagent 会话——官方端不显示。
+   需要识别标记: devin acp 会话 meta 可能有 parent/child 关系字段——查 initialize/session 信息。
+   加 server 端过滤标志 + mobile 可切换显示。
+5. **子 agent 进度可视化**: 会话内要能看到子 agent 在做什么——acp 事件里子 agent 活动形式待侦察。
+6. **流量与传输优化**: 移动网络下——快照事件裁剪(rawInput/rawOutput 大载荷)、增量同步压缩、
+   图片附件懒加载、ws 重连 backoff、弱网消息确认机制。
+
+### 当前批次已验证可用
+- 首屏 limit=60 + 用户滚动驱动翻页(8f0dc0d 已装机)——等用户反馈确认崩溃不再
+- server 新 bundle 在线(agentAlive) 含 revert/limit
