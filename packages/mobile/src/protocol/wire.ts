@@ -91,8 +91,32 @@ export interface SessionSubscribe {
   type: 'session.subscribe';
   sessionId: string;
   sinceSeq?: number;        // 断线重连: 从此 seq 之后补拉; 0/缺省 = 全量快照
+  limit?: number;           // 首屏快照条数上限(取最新 N 条); 缺省 server 默认 400
 }
 
+/** revert 回撤 — server 宽松透传到 devin 私有 ACP (cognition.ai/revert/*) */
+export interface SessionRevertListStepsReq {
+  type: 'session.revert.listSteps';
+  sessionId: string;
+}
+export interface SessionRevertForkReq {
+  type: 'session.revert.fork';
+  sessionId: string;
+  targetNodeId: string;
+}
+export interface SessionRevertStepsMsg {
+  type: 'session.revert.steps';
+  sessionId: string;
+  steps: RevertStepInfo[] | null;
+  raw?: unknown;
+}
+export interface SessionRevertForkedMsg {
+  type: 'session.revert.forked';
+  sessionId: string;
+  targetNodeId: string;
+  forkedSessionId?: string;
+  raw?: unknown;
+}
 /** 历史翻页请求 — 拉取 beforeSeq 之前的一批 */
 export interface SessionHistoryReq {
   type: 'session.history';
@@ -284,6 +308,8 @@ export type ClientMessage =
   | DevinSessionListRequest
   | SessionLoad
   | SessionSubscribe
+  | SessionRevertListStepsReq
+  | SessionRevertForkReq
   | SessionHistoryReq
   | SessionUnsubscribe
   | SessionCreate
@@ -613,6 +639,8 @@ export type ServerMessage =
   | SessionLoaded
   | SessionSnapshot
   | SessionHistoryBatchMsg
+  | SessionRevertStepsMsg
+  | SessionRevertForkedMsg
   | SessionEventMsg
   | SessionStatusMsg
   | PermissionRequestMsg
@@ -635,8 +663,7 @@ export type ServerMessage =
 
 // ---------- devin 私有 revert ACP 静态侦察类型 ----------
 // 证据来自 devin.exe v3000.6.7 字符串: cognition.ai/revert/listSteps|preview|execute|resume|forkFromStep。
-// 这些类型暂未加入 ClientMessage/ServerMessage union — server 当前没有 session.revert.* 转发端点;
-// 先保留形状供后续接线, 移动端当前只提供“复制上下文到新会话重问”的降级交互。
+// server a0cf964 起已有 session.revert.* 转发端点(宽松透传到 devin 私有 ACP); fork 优先于 execute(不动原会话)。
 
 export type CognitionRevertMethod =
   | 'cognition.ai/revert/listSteps'

@@ -45,6 +45,8 @@ import { notifyPermissionRequest } from '../notify';
 import { normalizeFsKey } from '../util/fspath';
 
 const HEARTBEAT_MS = 15_000;
+/** 首屏快照条数 — 打开会话只加载最新一屏, 向上翻页用 session.history 补 */
+const FIRST_PAGE_LIMIT = 60;
 const WATCHDOG_MS = 10_000;
 const DEAD_AFTER_MS = 45_000;
 const BACKOFF_BASE_MS = 1_000;
@@ -237,7 +239,7 @@ class DevinClient {
     if (this.authed) {
       const msg: ClientMessage = sinceSeq > 0
         ? { type: 'session.subscribe', sessionId, sinceSeq }
-        : { type: 'session.subscribe', sessionId };
+        : { type: 'session.subscribe', sessionId, limit: FIRST_PAGE_LIMIT };
       this.send(msg);
     }
   }
@@ -442,6 +444,18 @@ class DevinClient {
     this.historyInFlight.add(sessionId);
     return this.simpleRequest<SessionHistoryBatchMsg>('session.history.batch', msg, sessionId)
       .finally(() => this.historyInFlight.delete(sessionId));
+  }
+
+  /** revert: 拉取会话可回撤步骤列表 — server 宽松透传到 devin 私有 ACP */
+  revertListSteps(sessionId: string): Promise<import('../protocol/wire').SessionRevertStepsMsg> {
+    const msg: ClientMessage = { type: 'session.revert.listSteps', sessionId };
+    return this.simpleRequest('session.revert.steps', msg, sessionId);
+  }
+
+  /** revert: 从指定步骤分叉新会话(不动原会话, 最安全的回撤) — forkTargetNodeId 来自步骤 */
+  revertFork(sessionId: string, targetNodeId: string): Promise<import('../protocol/wire').SessionRevertForkedMsg> {
+    const msg: ClientMessage = { type: 'session.revert.fork', sessionId, targetNodeId };
+    return this.simpleRequest('session.revert.forked', msg, sessionId);
   }
 
   /**
@@ -911,6 +925,14 @@ class DevinClient {
         this.resolveSimple('session.history.batch', msg, msg.sessionId);
         return;
       }
+      case 'session.revert.steps': {
+        this.resolveSimple('session.revert.steps', msg, msg.sessionId);
+        return;
+      }
+      case 'session.revert.forked': {
+        this.resolveSimple('session.revert.forked', msg, msg.sessionId);
+        return;
+      }
       case 'session.event': {
         chat.applyEventMsg(msg.event);
         sessions.touchActivity(msg.event.sessionId, msg.event.ts, msg.event.seq);
@@ -1038,6 +1060,15 @@ class DevinClient {
     }
 
     // 额度查询失败 — 无 ref, 按 type 归属全部在途等待者
+    // revert 错误 — server 四级码 revert_not_supported/revert_timeout/revert_failed/agent_unavailable, ref=sessionId
+    if (code.startsWith('revert_') || (code === 'agent_unavailable' && ref)) {
+      if (ref) {
+        this.rejectSimple('session.revert.steps', new Error(message || '回撤失败'));
+        this.rejectSimple('session.revert.forked', new Error(message || '分叉失败'));
+      }
+      return;
+    }
+
     if (code === 'quota_failed') {
       this.rejectSimple('account.quota', new Error(message || '额度查询失败'));
       return;
@@ -1105,7 +1136,7 @@ class DevinClient {
       this.subscriptions.set(sessionId, { sinceSeq, active: true });
       const msg: ClientMessage = sinceSeq > 0
         ? { type: 'session.subscribe', sessionId, sinceSeq }
-        : { type: 'session.subscribe', sessionId };
+        : { type: 'session.subscribe', sessionId, limit: FIRST_PAGE_LIMIT };
       this.send(msg);
     }
   }

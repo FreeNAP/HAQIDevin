@@ -254,6 +254,10 @@ export default function ChatPage() {
   const [historyError, setHistoryError] = React.useState<string | null>(null);
   const [timelineJumping, setTimelineJumping] = React.useState(false);
   const [forking, setForking] = React.useState(false);
+  const [revertSteps, setRevertSteps] = React.useState<import('../../src/protocol/wire').RevertStepInfo[] | null>(null);
+  const [revertOpen, setRevertOpen] = React.useState(false);
+  const [revertLoading, setRevertLoading] = React.useState(false);
+  const [revertBusy, setRevertBusy] = React.useState(false);
   const [messageAction, setMessageAction] = React.useState<MessageActionTarget | null>(null);
   const [copyFlash, setCopyFlash] = React.useState(false);
   const [highlightItemId, setHighlightItemId] = React.useState<string | null>(null);
@@ -484,6 +488,47 @@ export default function ChatPage() {
       if (mountedRef.current) setForking(false);
     }
   }, [cwd, sessionId]);
+
+  /** 真实回撤: 拉步骤列表 — server a0cf964 起透传 devin 私有 ACP cognition.ai/revert/listSteps */
+  const openRevertSteps = React.useCallback(async () => {
+    if (revertLoading) return;
+    setMessageAction(null);
+    if (!client.isAuthed()) {
+      Alert.alert('无法回撤', '当前未连接到主机');
+      return;
+    }
+    setRevertLoading(true);
+    try {
+      const res = await client.revertListSteps(sessionId);
+      const steps = (res.steps ?? []).filter((st) => st.forkTargetNodeId);
+      if (steps.length === 0) {
+        Alert.alert('暂无可回撤步骤', res.steps === null ? 'agent 不支持或未返回步骤' : '步骤缺少分叉节点');
+        return;
+      }
+      setRevertSteps(steps);
+      setRevertOpen(true);
+    } catch (err) {
+      Alert.alert('回撤不可用', err instanceof Error ? err.message : '请稍后重试');
+    } finally {
+      if (mountedRef.current) setRevertLoading(false);
+    }
+  }, [sessionId, revertLoading]);
+
+  /** 真实回撤: 从选定步骤分叉新会话(不动原会话与文件以外状态) */
+  const forkFromStep = React.useCallback(async (step: import('../../src/protocol/wire').RevertStepInfo) => {
+    if (revertBusy || !step.forkTargetNodeId) return;
+    setRevertBusy(true);
+    try {
+      const res = await client.revertFork(sessionId, step.forkTargetNodeId);
+      if (!res.forkedSessionId) throw new Error('agent 未返回分叉会话 id');
+      setRevertOpen(false);
+      router.push(`/session/${encodeURIComponent(res.forkedSessionId)}`);
+    } catch (err) {
+      Alert.alert('分叉失败', err instanceof Error ? err.message : '请稍后重试');
+    } finally {
+      if (mountedRef.current) setRevertBusy(false);
+    }
+  }, [sessionId, revertBusy]);
 
   /** 高亮并滚动到 items 中的目标 — inverted data 是逆序, FlatList index 需要倒算 */
   const focusItem = React.useCallback((itemId: string): boolean => {
@@ -860,6 +905,18 @@ export default function ChatPage() {
                     </M>
                   </Pressable>
                 )}
+                <Pressable
+                  onPress={() => void openRevertSteps()}
+                  disabled={revertLoading}
+                  style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: ideColors.card2 }, revertLoading && { opacity: 0.45 }]}
+                >
+                  <T size={12} weight="medium" color={ideColors.text}>
+                    {revertLoading ? '正在读取可回撤步骤…' : '分叉回撤（真实 · 实验）'}
+                  </T>
+                  <M size={8.5} color={ideColors.faint} style={{ marginTop: 3 }}>
+                    devin 私有 revert 协议; 分叉新会话不动原会话
+                  </M>
+                </Pressable>
                 <Pressable onPress={() => setMessageAction(null)} style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: ideColors.card2 }]}>
                   <T size={12} color={ideColors.faint} style={{ textAlign: 'center' }}>
                     取消
@@ -867,6 +924,44 @@ export default function ChatPage() {
                 </Pressable>
               </Pressable>
             )}
+          </Pressable>
+        </Modal>
+
+        {/* 回撤步骤 — devin 私有 revert/listSteps; 选步分叉新会话 */}
+        <Modal visible={revertOpen} transparent animationType="fade" onRequestClose={() => setRevertOpen(false)}>
+          <Pressable style={styles.menuBackdrop} onPress={() => setRevertOpen(false)}>
+            <Pressable onPress={(e) => e.stopPropagation()} style={styles.timelineSheet}>
+              <View style={styles.menuHead}>
+                <M size={10.5} weight="bold" uppercase ls={0.8} color={ideColors.text}>
+                  分叉回撤
+                </M>
+                <M size={8.5} color={ideColors.faint} style={{ marginTop: 4 }}>
+                  选择步骤从该处分叉新会话; 原会话与历史不受影响
+                </M>
+              </View>
+              {(revertSteps ?? []).map((step) => (
+                <Pressable
+                  key={step.forkTargetNodeId ?? String(step.stepNumber)}
+                  onPress={() => void forkFromStep(step)}
+                  disabled={revertBusy}
+                  style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: ideColors.card2 }, revertBusy && { opacity: 0.45 }]}
+                >
+                  <T size={12} weight="medium" color={ideColors.text} numberOfLines={2}>
+                    #{step.stepNumber} {step.summary || step.kind || '步骤'}
+                  </T>
+                  {step.kind ? (
+                    <M size={8.5} color={ideColors.faint} style={{ marginTop: 2 }}>
+                      {step.kind}
+                    </M>
+                  ) : null}
+                </Pressable>
+              ))}
+              <Pressable onPress={() => setRevertOpen(false)} style={({ pressed }) => [styles.menuRow, pressed && { backgroundColor: ideColors.card2 }]}>
+                <T size={12} color={ideColors.faint} style={{ textAlign: 'center' }}>
+                  取消
+                </T>
+              </Pressable>
+            </Pressable>
           </Pressable>
         </Modal>
 
